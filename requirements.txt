@@ -1,0 +1,6 @@
+telethon>=1.36.0
+python-dotenv>=1.0.0
+tqdm>=4.66.0
+google-genai>=1.0.0
+httpx[socks]>=0.28.0
+asyncpg>=0.29.0
