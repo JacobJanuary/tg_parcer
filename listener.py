@@ -616,6 +616,23 @@ async def main():
         except Exception as e:
             logger.debug(f"Spider initial resolve error: {e}")
 
+    # ─── Heartbeat worker ───
+
+    _start_time = datetime.now()
+
+    async def _heartbeat_worker():
+        """Печатает статистику каждые 60 секунд."""
+        while True:
+            await asyncio.sleep(60)
+            uptime = datetime.now() - _start_time
+            mins = int(uptime.total_seconds()) // 60
+            print(
+                f"💓 [{mins}m] msgs={msg_count} filtered={filtered_count} "
+                f"events={event_count} dups={dup_count} spider={spider_count}"
+            )
+
+    _fire_and_forget(_heartbeat_worker())
+
     # ─── Запуск ───
 
     ai_label = f"🤖 {analyzer.model}"
