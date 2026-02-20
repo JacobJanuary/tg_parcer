@@ -51,8 +51,10 @@ The following are NOT events (return is_event=false):
 - Currency exchange: "USDT exchange", "baht rate", "p2p"
 - Services: "massage", "transfer", "cleaning", "nails"
 - Questions/discussions: "where is it happening?", "who knows?", "we're going there", casual chat
+- Event cancellations: "cancelled", "won't be held", "postponed indefinitely"
 - Channel/bot ads and online webinars
-- 🚨 CRITICAL: Announcements with NO indication of a physical venue (no direct address like "Moo 5", no branded venue name like "AUM", "Prana", "Catch", "Osho", "Orion". For example "location in DM" or "join our group" with no venue) — these are NOT events.
+- 🚨 CRITICAL: Announcements with NO indication of a physical venue (no direct address like "Moo 5", no branded venue name like "AUM", "Prana", "Catch", "Osho", "Orion"). For example "location in DM" or "join our group" with no venue — these are NOT events.
+- HOWEVER: If the CHAT NAME itself is a known venue or brand (e.g. chat "SATI YOGA" or "Ошо медитация Koh Phangan"), the chat name CAN serve as the venue indicator.
 
 IMPORTANT: Messages may be in Russian, English, or mixed. Analyze the CONTENT regardless of language."""
 
@@ -63,12 +65,19 @@ Extract data about the OFFLINE EVENT from the text.
 RULES:
 1. Category: one of "Party", "Sport", "Business", "Education", "Chill".
 2. Price (price_thb): number in Thai Baht, 0 if free, null if unknown.
-3. Location (location_name): exact venue name for Google Maps lookup. 🚨 IMPORTANT: If no direct address exists but the event has a branded name (e.g. "AUM DAY", "training at Prana", "Osho meditation", "Orion Healing Center"), extract the brand ("AUM", "Prana", "Osho", "Orion") as location_name. Otherwise null.
-4. Date: "today" = {today}, "tomorrow" = next day. Otherwise null. Parse Russian date words: "сегодня"=today, "завтра"=tomorrow.
+3. Location (location_name): exact venue name for Google Maps lookup.
+   a) First, look for a venue name in the MESSAGE TEXT (direct address, branded name like "AUM", "Prana", "Cafe 13", "Soul Breakfast Phangan").
+   b) If NOT found in text, check the CHAT NAME. If the chat name IS a venue or brand (e.g. "SATI YOGA", "Ошо медитация Koh Phangan", "NEWS_NASHEMESTO" → "Mesto"), use that as location_name.
+   c) If neither text nor chat name yields a venue → location_name = null.
+4. Date: "today" = {today}, "tomorrow" = next day. Parse Russian: "сегодня"=today, "завтра"=tomorrow. Otherwise null.
 5. Title: short catchy title, max 30 characters.
 6. Summary: one sentence, max 80 characters.
 7. Description: attractive event announcement for a listing, 2-4 sentences, max 500 chars. Convey the atmosphere, what will happen and why it's worth attending.
-8. 🚨 EXCLUSIONS: If this is a question ("where is it?"), personal discussion, service offer (massage) OR if location_name is null and cannot be derived from text — return is_event = false. STRICT RULE: An event without a location (even implied) is not an event.
+8. 🚨 EXCLUSIONS — return is_event=false if ANY of these apply:
+   - It is a question ("where is it?", "who knows?"), personal discussion, or service offer
+   - It is an event cancellation ("cancelled", "won't be happening", "отмена")
+   - location_name is null after checking BOTH text AND chat name
+   STRICT RULE: An event without a location is NOT an event. DOUBLE-CHECK: before returning is_event=true, verify that location_name is NOT null/empty.
 9. IMPORTANT: extract ONLY ONE object (the nearest/most relevant event).
 
 IMPORTANT: The message text may be in Russian, English, or mixed languages. Analyze content regardless of language."""
