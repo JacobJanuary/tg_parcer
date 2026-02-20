@@ -27,47 +27,51 @@ logger = logging.getLogger(__name__)
 # ─── Pydantic Schemas (Structured Outputs) ───
 
 class PreScreenResult(BaseModel):
-    is_event: bool = Field(description="True если текст содержит реальное оффлайн-мероприятие")
+    is_event: bool = Field(description="True if the text contains a real offline event")
 
 class EventResult(BaseModel):
-    is_event: bool = Field(description="True если это реальный ивент")
-    title: Optional[str] = Field(description="Краткое цепляющее название до 30 символов")
-    category: Optional[str] = Field(description="Одна из 5 категорий: Party, Sport, Business, Education, Chill")
-    date: Optional[str] = Field(description="Дата в формате YYYY-MM-DD, если указана. Иначе null")
-    time: Optional[str] = Field(description="Время в формате HH:MM, если указано. Иначе null")
-    location_name: Optional[str] = Field(description="Название заведения для Google Maps. Иначе null")
-    price_thb: Optional[int] = Field(description="Цена в батах (0 если бесплатно). Иначе null")
-    summary: Optional[str] = Field(description="Суть в 1 предложение до 80 символов")
-    description: Optional[str] = Field(description="Анонс мероприятия для афиши, 2-4 предложения")
+    is_event: bool = Field(description="True if this is a real offline event")
+    title: Optional[str] = Field(description="Short catchy title, max 30 characters")
+    category: Optional[str] = Field(description="One of 5 categories: Party, Sport, Business, Education, Chill")
+    date: Optional[str] = Field(description="Date in YYYY-MM-DD format if specified, otherwise null")
+    time: Optional[str] = Field(description="Time in HH:MM format if specified, otherwise null")
+    location_name: Optional[str] = Field(description="Venue name for Google Maps lookup, otherwise null")
+    price_thb: Optional[int] = Field(description="Price in Thai Baht (0 if free), otherwise null")
+    summary: Optional[str] = Field(description="One sentence summary, max 80 characters")
+    description: Optional[str] = Field(description="Event announcement for listing, 2-4 sentences")
 
 
 # ─── Prompts ───
 
-PRESCREEN_PROMPT = """Определи, содержит ли это сообщение из Telegram информацию о РЕАЛЬНОМ ОФФЛАЙН-МЕРОПРИЯТИИ (вечеринка, концерт, йога, митап, спорт, мастер-класс, нетворкинг, фестиваль, экскурсия, медитация, ретрит и т.д.).
+PRESCREEN_PROMPT = """Determine if this Telegram message contains information about a REAL OFFLINE EVENT (party, concert, yoga, meetup, sports, masterclass, networking, festival, excursion, meditation, retreat, etc.).
 
-НЕ считаются ивентами (возвращай is_event=false):
-- Продажа/покупка: «Продам байк», «куплю iPhone», «б/у мебель»
-- Аренда: «Сдам виллу», «ищу квартиру», «аренда байка»
-- Обмен валют: «обмен USDT», «курс бата», «p2p»
-- Услуги: «массаж», «трансфер», «клининг», «ноготочки»
-- Вопросы/обсуждения: «подскажите, где проходит?», «кто знает?», «мы туда идем», общая разговорная болтовня
-- Реклама каналов/ботов и онлайн-вебинары
-- 🚨 КРИТИЧЕСКИ ВАЖНО: Анонсы, в которых НЕТ никаких указаний на физическое место (ни прямого адреса "Moo 5", ни брендированного названия заведения "AUM", "Prana", "Catch", "Osho", "Orion". Например "место в ЛС" или "приглашаю на группу" без локации) — это НЕ ивенты."""
+The following are NOT events (return is_event=false):
+- Buy/sell posts: "selling bike", "buying iPhone", "used furniture"
+- Rent/lease: "villa for rent", "looking for apartment", "bike rental"
+- Currency exchange: "USDT exchange", "baht rate", "p2p"
+- Services: "massage", "transfer", "cleaning", "nails"
+- Questions/discussions: "where is it happening?", "who knows?", "we're going there", casual chat
+- Channel/bot ads and online webinars
+- 🚨 CRITICAL: Announcements with NO indication of a physical venue (no direct address like "Moo 5", no branded venue name like "AUM", "Prana", "Catch", "Osho", "Orion". For example "location in DM" or "join our group" with no venue) — these are NOT events.
+
+IMPORTANT: Messages may be in Russian, English, or mixed. Analyze the CONTENT regardless of language."""
 
 
-EXTRACT_PROMPT = """Ты — AI-ассистент геолокационного приложения на Пхукете/Пангане.
-Извлеки данные об ОФФЛАЙН-МЕРОПРИЯТИИ из текста.
+EXTRACT_PROMPT = """You are an AI assistant for a geo-location event app on Phuket/Koh Phangan.
+Extract data about the OFFLINE EVENT from the text.
 
-ПРАВИЛА:
-1. Категория: одна из "Party", "Sport", "Business", "Education", "Chill".
-2. Цена (price_thb): число в батах, 0 если бесплатно. Иначе null.
-3. Локация (location_name): точное название заведения для Google Maps. 🚨 ВАЖНО: Если прямого адреса нет, но само событие имеет брендированное имя (например "AUM DAY", "тренировки в Prana", "Ошо медитация", "Orion Healing Center"), извлекай бренд ("AUM", "Prana", "Osho", "Orion") как location_name. Иначе null.
-4. Дата: "сегодня" = {today}, "завтра" = следующий день. Иначе null.
-5. Title: краткое цепляющее название до 30 символов.
-6. Summary: суть в 1 предложение до 80 символов.
-7. Description: привлекательный анонс мероприятия для афиши, 2-4 предложения, до 500 символов. Передай атмосферу, укажи что будет и почему стоит прийти.
-8. 🚨 ИСКЛЮЧЕНИЯ: Если это вопрос ("где проходит?"), личное обсуждение ("я перепутала"), предложение услуг (массаж) ИЛИ ЕСЛИ location_name РАВЕН null и его невозможно вывести из текста — возвращай is_event = false. СТРОГОЕ ПРАВИЛО: Ивент без локации (даже подразумеваемой) не является ивентом.
-9. ВАЖНО: извлекай ТОЛЬКО ОДИН объект (самый ближайший/релевантный ивент)."""
+RULES:
+1. Category: one of "Party", "Sport", "Business", "Education", "Chill".
+2. Price (price_thb): number in Thai Baht, 0 if free, null if unknown.
+3. Location (location_name): exact venue name for Google Maps lookup. 🚨 IMPORTANT: If no direct address exists but the event has a branded name (e.g. "AUM DAY", "training at Prana", "Osho meditation", "Orion Healing Center"), extract the brand ("AUM", "Prana", "Osho", "Orion") as location_name. Otherwise null.
+4. Date: "today" = {today}, "tomorrow" = next day. Otherwise null. Parse Russian date words: "сегодня"=today, "завтра"=tomorrow.
+5. Title: short catchy title, max 30 characters.
+6. Summary: one sentence, max 80 characters.
+7. Description: attractive event announcement for a listing, 2-4 sentences, max 500 chars. Convey the atmosphere, what will happen and why it's worth attending.
+8. 🚨 EXCLUSIONS: If this is a question ("where is it?"), personal discussion, service offer (massage) OR if location_name is null and cannot be derived from text — return is_event = false. STRICT RULE: An event without a location (even implied) is not an event.
+9. IMPORTANT: extract ONLY ONE object (the nearest/most relevant event).
+
+IMPORTANT: The message text may be in Russian, English, or mixed languages. Analyze content regardless of language."""
 
 
 
@@ -132,7 +136,7 @@ class EventAnalyzer:
         await self.screen_limiter.acquire()
         self.stats["screened"] += 1
 
-        user_prompt = f"Чат: {chat_title}\n\nСообщение:\n{text[:1000]}"
+        user_prompt = f"Chat: {chat_title}\n\nMessage:\n{text[:1000]}"
 
         try:
             response = await asyncio.to_thread(
@@ -221,7 +225,7 @@ class EventAnalyzer:
 
         today = date.today().isoformat()
         system_prompt = EXTRACT_PROMPT.replace("{today}", today)
-        user_prompt = f"Чат: {chat_title}\n\nСообщение:\n{text[:2000]}"
+        user_prompt = f"Chat: {chat_title}\n\nMessage:\n{text[:2000]}"
 
         models_to_try = [self.model]
 

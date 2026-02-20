@@ -113,34 +113,36 @@ async def gemini_check_location(gemini_client, title: str, username: str,
     from pydantic import BaseModel, Field
 
     class LocationVerdict(BaseModel):
-        verdict: str = Field(description="Одно из: 'relevant', 'reject', 'manual'")
-        reason: str = Field(description="Краткое пояснение причины")
-        location: str | None = Field(description="Остров/город, или null если неизвестно")
+        verdict: str = Field(description="One of: 'relevant', 'reject', 'manual'")
+        reason: str = Field(description="Brief explanation of the verdict")
+        location: str | None = Field(description="Island/city name, or null if unknown")
 
-    info = f"Название: {title}"
+    info = f"Title: {title}"
     if username:
         info += f"\nUsername: @{username}"
     if chat_type:
-        info += f"\nТип: {chat_type}"
+        info += f"\nType: {chat_type}"
     if participants:
-        info += f"\nУчастников: {participants}"
+        info += f"\nParticipants: {participants}"
 
-    prompt = f"""Определи локацию этого Telegram-чата/канала.
+    prompt = f"""Determine the physical location of this Telegram chat/channel.
 
 {info}
 
-Шаги:
-1. Поищи информацию о том что это за место/сообщество и где оно физически находится.
-2. Если это на острове Ко Панган (Koh Phangan) — verdict = "relevant"
-3. Если это на Пхукете, Самуи, Бали или в другом конкретном месте — verdict = "reject"
-4. Если не можешь определить локацию — verdict = "manual"
-5. Reject если это общетематический канал без привязки к локации, личный блог, бот или спам.
+Steps:
+1. Search for information about what this place/community is and where it is physically located.
+2. If it is on Koh Phangan island — verdict = "relevant"
+3. If it is on Phuket, Samui, Bali or another specific location — verdict = "reject"
+4. If you cannot determine the location — verdict = "manual"
+5. Reject if it is a general-topic channel with no location binding, a personal blog, bot, or spam.
 
-Ответь СТРОГО валидным JSON объектом по следующей схеме:
+NOTE: The title may be in Russian, English, or mixed. Analyze content regardless of language.
+
+Reply STRICTLY with a valid JSON object matching this schema:
 {{
   "verdict": "relevant" | "reject" | "manual",
-  "reason": "Краткое пояснение",
-  "location": "Город/Остров или null"
+  "reason": "Brief explanation",
+  "location": "City/Island or null"
 }}
 CRITICAL RULES:
 1. Do not wrap code in markdown blocks (e.g. ```json).
@@ -181,7 +183,6 @@ CRITICAL RULES:
                             break
 
                 if text:
-                    import re
                     match = re.search(r'(\{.*\})', text, re.DOTALL)
                     if match:
                         text = match.group(1).strip()
@@ -194,7 +195,6 @@ CRITICAL RULES:
                     raise ValueError(f"Empty response from {model} (finish_reason: {finish_reason})")
 
                 try:
-                    import json
                     parsed = json.loads(text)
                 except json.JSONDecodeError as je:
                     import ast
@@ -202,8 +202,6 @@ CRITICAL RULES:
                         loose_text = text.replace('true', 'True').replace('false', 'False').replace('null', 'None')
                         parsed = ast.literal_eval(loose_text)
                     except Exception:
-                        import logging
-                        logger = logging.getLogger(__name__)
                         logger.warning(f"SpiderNotify raw text failure:\n{text}")
                         raise je
 
@@ -213,9 +211,6 @@ CRITICAL RULES:
                 break
 
             except Exception as e:
-                # transient check uses stringified exception which now contains TOO_MANY_TOOL_CALLS if raised
-                import logging
-                logger = logging.getLogger(__name__)
                 if _is_transient(e) and attempt < max_retries:
                     wait = backoff * (2 ** (attempt - 1))  # 5→10→20
                     logger.warning(

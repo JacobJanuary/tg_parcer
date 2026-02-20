@@ -45,12 +45,12 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 class VenueData(BaseModel):
-    found: bool = Field(description="True если локация найдена с точными координатами")
-    name: Optional[str] = Field(description="Официальное название на Google Maps. Иначе null")
-    lat: Optional[float] = Field(description="Широта (latitude). Иначе null")
-    lng: Optional[float] = Field(description="Долгота (longitude). Иначе null")
-    google_maps_url: Optional[str] = Field(description="Ссылка на Google Maps. Иначе null")
-    address: Optional[str] = Field(description="Физический адрес из Google Maps. Иначе null")
+    found: bool = Field(description="True if the location was found with exact coordinates")
+    name: Optional[str] = Field(description="Official name on Google Maps, otherwise null")
+    lat: Optional[float] = Field(description="Latitude, otherwise null")
+    lng: Optional[float] = Field(description="Longitude, otherwise null")
+    google_maps_url: Optional[str] = Field(description="Google Maps URL, otherwise null")
+    address: Optional[str] = Field(description="Physical address from Google Maps, otherwise null")
 
 
 # ─── Промпт для поиска площадки ───
@@ -380,7 +380,6 @@ class VenueEnricher:
                     
                     # Иногда Gemini отвечает двумя одинаковыми JSON подряд (Extra data error). 
                     # Разделяем их и берем только первый.
-                    import re
                     if re.search(r'\}\s*\{', text):
                         text = re.split(r'\}\s*\{', text)[0] + '}'
                         
@@ -393,7 +392,6 @@ class VenueEnricher:
                     raise ValueError(f"Empty response from {model} (finish_reason: {finish_reason})")
 
                 try:
-                    import json
                     result = json.loads(text)
                 except json.JSONDecodeError as je:
                     # Резервный парсинг для одинарных кавычек и лишних запятых
@@ -408,7 +406,6 @@ class VenueEnricher:
                             return {"found": False}
                             
                         # 2. Emergency Fallback: Regex extraction (для обрезанных JSON)
-                        import re
                         m_name = re.search(r'["\']?name["\']?\s*:\s*["\']([^"\']+)["\']', loose_text)
                         m_lat = re.search(r'["\']?lat["\']?\s*:\s*([-\d\.]+)', text)
                         m_lng = re.search(r'["\']?lng["\']?\s*:\s*([-\d\.]+)', text)
@@ -465,8 +462,6 @@ class VenueEnricher:
             (venue_name, self.model)
         ]
 
-        import re
-        
         # 1. Fallback: Add 'Koh Phangan' to English/Mixed names if not present
         if not re.search(r'phangan|панган', venue_name, re.IGNORECASE):
             phangan_hint = f"{venue_name} Koh Phangan"
