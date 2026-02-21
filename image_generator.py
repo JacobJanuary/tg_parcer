@@ -77,6 +77,29 @@ Return ONLY the English visual prompt, nothing else. Keep it under 60 words.
             logger.error(f"❌ Ошибка генерации промпта (Арт-Директор): {e}")
             return None
 
+    def _process_and_save_image(self, image_bytes: bytes, category: str) -> str:
+        """Ресайз под мобилки (макс ширина 600px) и конвертация в WebP."""
+        image = Image.open(BytesIO(image_bytes))
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+            
+        # Оптимизация под мобильные экраны (обычно карточка 300-400px, x2 для Retina = 600-800px)
+        target_width = 600
+        w, h = image.size
+        # Уменьшаем только если оригинал больше
+        if w > target_width:
+            target_height = int(h * (target_width / w))
+            # Используем LANCZOS для качественного даунскейла
+            # Для совместимости с разными версиями Pillow пробуем оба варианта
+            resample_filter = getattr(Image, "Resampling", Image).LANCZOS
+            image = image.resize((target_width, target_height), resample_filter)
+            
+        filename = f"event_{category.lower()}_{os.urandom(4).hex()}.webp"
+        filepath = os.path.join(self.media_dir, filename)
+        # Сохраняем в WebP (quality 85 и method 6 дают лучшее сжатие при отличном качестве)
+        image.save(filepath, "WEBP", quality=85, method=6)
+        return filename
+
     def _sync_render_image(self, image_prompt: str, category: str, model_name: str) -> str:
         """ШАГ 2: Визуальная модель рисует шедевр"""
         logger.debug(f"⏳ 3. Рисуем картинку через {model_name}...")
@@ -94,13 +117,7 @@ Return ONLY the English visual prompt, nothing else. Keep it under 60 words.
             )
             for part in result.candidates[0].content.parts:
                 if part.inline_data:
-                    image_bytes = part.inline_data.data
-                    image = Image.open(BytesIO(image_bytes))
-                    if image.mode != "RGB":
-                        image = image.convert("RGB")
-                    filename = f"event_{category.lower()}_{os.urandom(4).hex()}.jpg"
-                    filepath = os.path.join(self.media_dir, filename)
-                    image.save(filepath, "JPEG", quality=90)
+                    filename = self._process_and_save_image(part.inline_data.data, category)
                     logger.info(f"✅ Успех ({model_name})! Сочная обложка сохранена: {filename}")
                     return filename
         else:
@@ -109,19 +126,14 @@ Return ONLY the English visual prompt, nothing else. Keep it under 60 words.
                 prompt=image_prompt,
                 config=types.GenerateImagesConfig(
                     number_of_images=1,
-                    output_mime_type="image/jpeg",
+                    # output_mime_type="image/jpeg", # Imagen 3 is fine without this if we convert bytes later 
                     aspect_ratio="3:4", 
                     person_generation="ALLOW_ADULT"
                 )
             )
             
             for generated_image in result.generated_images:
-                image = Image.open(BytesIO(generated_image.image.image_bytes))
-                if image.mode != "RGB":
-                    image = image.convert("RGB")
-                filename = f"event_{category.lower()}_{os.urandom(4).hex()}.jpg"
-                filepath = os.path.join(self.media_dir, filename)
-                image.save(filepath, "JPEG", quality=90)
+                filename = self._process_and_save_image(generated_image.image.image_bytes, category)
                 logger.info(f"✅ Успех ({model_name})! Сочная обложка сохранена: {filename}")
                 return filename
             
