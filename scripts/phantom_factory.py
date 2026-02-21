@@ -87,54 +87,88 @@ def build_phantom_prompt(gender: str, mood: str) -> str:
 
 # ─── Avatar Generation ───
 
-def _generate_avatar_sync(client: genai.Client, prompt: str) -> str | None:
-    """Synchronous call to Google GenAI SDK (Imagen)."""
+def _process_and_save_image(image_bytes: bytes) -> str:
+    """Ресайз под мобилки (макс ширина 600px) и конвертация в WebP."""
+    image = Image.open(BytesIO(image_bytes))
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+        
+    target_width = 600
+    w, h = image.size
+    if w > target_width:
+        target_height = int(h * (target_width / w))
+        resample_filter = getattr(Image, "Resampling", Image).LANCZOS
+        image = image.resize((target_width, target_height), resample_filter)
+        
+    filename = f"phantom_{uuid.uuid4().hex[:8]}.webp"
+    filepath = os.path.join(MEDIA_DIR, filename)
+    image.save(filepath, "WEBP", quality=85, method=6)
+    return os.path.join("avatars", filename)
+
+
+def _sync_render_image(client: genai.Client, prompt: str, model_name: str) -> str | None:
+    """Synchronous call to Google GenAI SDK (Imagen или Gemini)."""
     
-    models = ["imagen-3.0-generate-002", "imagen-3.0-fast-generate-001"] # Fallback models
+    logger.debug(f"⏳ Рисуем через {model_name}...")
     
-    for model_name in models:
-        try:
+    try:
+        if "gemini" in model_name:
+            result = client.models.generate_content(
+                model=model_name,
+                contents=[prompt],
+                config=types.GenerateContentConfig(
+                    response_modalities=["IMAGE"],
+                    image_config=types.ImageConfig(
+                        aspect_ratio="1:1"
+                    )
+                )
+            )
+            for part in result.candidates[0].content.parts:
+                if part.inline_data:
+                    return _process_and_save_image(part.inline_data.data)
+        else:
             result = client.models.generate_images(
                 model=model_name,
                 prompt=prompt,
                 config=types.GenerateImagesConfig(
                     number_of_images=1,
                     aspect_ratio="1:1",
-                    person_generation="ALLOW_ADULT",
-                    output_mime_type="image/jpeg"
+                    person_generation="ALLOW_ADULT"
                 )
             )
             
             for generated_image in result.generated_images:
-                image_bytes = generated_image.image.image_bytes
-                
-                # Verify and process image
-                image = Image.open(BytesIO(image_bytes))
-                if image.mode != "RGB":
-                    image = image.convert("RGB")
-                
-                filename = f"phantom_{uuid.uuid4().hex[:8]}.jpg"
-                filepath = os.path.join(MEDIA_DIR, filename)
-                
-                # Save as optimized JPEG
-                image.save(filepath, "JPEG", quality=90)
-                return os.path.join("avatars", filename) # Return relative path
-                
-        except Exception as e:
-            logger.debug(f"  [Model {model_name} failed] {e}")
-            continue
-            
-    logger.error("  ❌ All model fallbacks failed for this prompt.")
+                return _process_and_save_image(generated_image.image.image_bytes)
+    except Exception as e:
+        logger.debug(f"❌ Ошибка {model_name}: {e}")
+        return None
+        
     return None
 
 async def generate_avatar(client: genai.Client, prompt: str) -> str | None:
-    """Async wrapper for avatar generation."""
-    return await asyncio.to_thread(_generate_avatar_sync, client, prompt)
+    """Асинхронная обертка с каскадным Failover (Rate Limit Protector)."""
+    
+    # Такая же логика как в image_generator.py
+    fallback_models = [
+        "imagen-4.0-fast-generate-001",
+        "imagen-4.0-generate-001",
+        "gemini-2.5-flash-image"
+    ]
+    
+    for attempt, model_name in enumerate(fallback_models):
+        relative_path = await asyncio.to_thread(_sync_render_image, client, prompt, model_name)
+        if relative_path:
+            return relative_path
+            
+        logger.warning(f"  ⚠️ Модель {model_name} не справилась. Пробуем следующую..." if attempt < len(fallback_models)-1 else "  ❌ Все модели упали.")
+        await asyncio.sleep(2) # Пауза перед фоллбеком
+        
+    return None
 
 
 # ─── Main Factory Logic ───
 
-async def run_factory():
+async def run_factory(is_test_mode: bool = False):
     logger.info("👻 Initializing Phantom Protocol...")
     
     # 1. DB Setup
@@ -144,8 +178,6 @@ async def run_factory():
     except Exception as e:
         logger.error(f"❌ DB Connection failed: {e}")
         return
-
-    # Verify users table existence is handled.
     
     # 2. GenAI Setup
     gemini_key, gemini_proxy = config.validate_gemini()
@@ -155,27 +187,35 @@ async def run_factory():
         http_client = httpx.Client(proxy=gemini_proxy, timeout=120.0)
         client._api_client._httpx_client = http_client
 
-    # 3. Determine remaining required phantoms per mood
-    # We query to see how many we already have so the script is idempotent
-    existing = await db.pool.fetch("""
-        SELECT mood, COUNT(*) as cnt 
-        FROM users 
-        WHERE is_phantom = TRUE 
-        GROUP BY mood
-    """)
-    current_counts = {r['mood']: r['cnt'] for r in existing}
-    
+    # 3. Build Plan
     target_plan = []
-    for mood, target in MOOD_DISTRIBUTION.items():
-        current = current_counts.get(mood, 0)
-        needed = max(0, target - current)
-        for _ in range(needed):
-            target_plan.append(mood)
-            
-    random.shuffle(target_plan) # Randomize creation order
+    
+    if is_test_mode:
+        logger.info("🧪 TEST MODE: Generating exactly 6 phantoms (1 male, 1 female per mood).")
+        # 3 moods * 2 genders = 6 phantoms total
+        for mood in MOOD_DISTRIBUTION.keys():
+            target_plan.append((mood, 'female'))
+            target_plan.append((mood, 'male'))
+    else:
+        # Check existing to make script idempotent
+        existing = await db.pool.fetch("""
+            SELECT mood, COUNT(*) as cnt 
+            FROM users 
+            WHERE is_phantom = TRUE 
+            GROUP BY mood
+        """)
+        current_counts = {r['mood']: r['cnt'] for r in existing}
+        
+        for mood, target in MOOD_DISTRIBUTION.items():
+            current = current_counts.get(mood, 0)
+            needed = max(0, target - current)
+            for _ in range(needed):
+                target_plan.append((mood, random.choice(GENDER_WEIGHTS)))
+                
+        random.shuffle(target_plan) # Randomize creation order
     
     if not target_plan:
-        logger.info("✅ Phantom Protocol already complete. 100 users exist.")
+        logger.info("✅ Phantom Protocol already complete. Users exist.")
         await db.close()
         return
         
@@ -185,13 +225,10 @@ async def run_factory():
     success_count = 0
     total_needed = len(target_plan)
     
-    for i, mood in enumerate(target_plan, 1):
+    for i, (mood, gender) in enumerate(target_plan, 1):
         # We loop until this specific phantom is successfully created
         while True:
             # 4.1 Generate Identity
-            gender = random.choice(GENDER_WEIGHTS)
-            
-            # Faker logic: match name to gender
             if gender == 'female':
                 first_name = fake.first_name_female()
             else:
@@ -207,7 +244,7 @@ async def run_factory():
             if not relative_path:
                 logger.warning(f"  ⚠️ Generation failed for '{first_name}'. Retrying in 5s...")
                 await asyncio.sleep(5)
-                continue # Retry same mood iteration
+                continue # Retry same iteration
                 
             # 4.3 Save to DB
             try:
@@ -225,11 +262,11 @@ async def run_factory():
                 
             except Exception as e:
                 logger.error(f"  ❌ DB Insert error: {e}")
-                # We generated the image but failed to save. We should break to avoid infinite loops on DB failure
                 break 
 
     logger.info(f"\n🎉 Phantom Protocol Complete! Created {success_count} Phantoms.")
     await db.close()
 
 if __name__ == "__main__":
-    asyncio.run(run_factory())
+    is_test = "--test" in sys.argv
+    asyncio.run(run_factory(is_test_mode=is_test))
