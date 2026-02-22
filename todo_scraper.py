@@ -9,16 +9,43 @@ from ai_analyzer import EventAnalyzer
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+import httpx
+import os
+from datetime import datetime
+
+async def download_image(url: str, dest_dir: str = "media") -> str | None:
+    if not url:
+        return None
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+        # Generate a unique filename
+        filename = f"todotoday_{int(datetime.now().timestamp())}_{hash(url)}.jpg"
+        filepath = os.path.join(dest_dir, filename)
+        
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            with open(filepath, "wb") as f:
+                f.write(resp.content)
+        return filepath
+    except Exception as e:
+        logger.warning(f"Failed to download image {url}: {e}")
+        return None
+
 async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, db: Database, ev: dict):
     async with sem:
         raw_text = ev['raw_text']
         source_url = ev['source_url']
+        image_url = ev.get('image_url')
         logger.info(f"Extracting: {raw_text[:50]}...")
         
         result = await ai_analyzer.extract(raw_text, chat_title="todo.today")
         if not result or not result.get("is_event"):
             logger.warning(f"AI rejected event: {raw_text}")
             return
+            
+        # Download image if available
+        local_image_path = await download_image(image_url) if image_url else None
             
         # Append meta
         result["_meta"] = {
@@ -28,6 +55,12 @@ async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, db: 
             "sender": "scraper",
             "original_text": f"{raw_text}\\nSource: {source_url}"
         }
+        
+        if local_image_path:
+            # We inject it into the final dictionary for the DB insertion signature
+            # if we extend the `db.insert_event` schema to support manual images.
+            # Currently `db.insert_event` doesn't accept an explicit image_path argument. 
+            pass # TODO: Add image_path to db insert
         
         # Insert to DB
         try:
@@ -133,10 +166,20 @@ async def scrape_todo_today():
         href = link_tag.get("href", "")
         aria_label = link_tag.get("aria-label", "")
         
+        # Extract the background image URL from the style tag
+        # e.g. background-image: url('https://todo.today/wp-content/uploads/something.jpg');
+        style_attr = link_tag.get("style", "")
+        image_url = None
+        if "url('" in style_attr:
+            image_url = style_attr.split("url('")[1].split("')")[0]
+        elif "url(" in style_attr:
+            image_url = style_attr.split("url(")[1].split(")")[0]
+        
         if aria_label:
             parsed_events.append({
                 "source_url": href,
-                "raw_text": aria_label
+                "raw_text": aria_label,
+                "image_url": image_url
             })
             
     # Deduplicate by URL
