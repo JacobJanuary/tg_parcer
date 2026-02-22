@@ -106,8 +106,12 @@ async def scrape_todo_today():
         logger.info("Waiting for Cloudflare bypass...")
         await page.wait_for_timeout(8000)
         
+        # 1. Grab Today's events from the initial DOM
+        logger.info("Capturing 'Today's' events from initial DOM...")
+        today_html = await page.content()
+        
         # We will intercept the AJAX response directly by clicking a UI element
-        logger.info("Setting up AJAX interception...")
+        logger.info("Setting up AJAX interception for 'Tomorrow'...")
         
         ajax_response_html = ""
         
@@ -148,14 +152,16 @@ async def scrape_todo_today():
         await page.wait_for_timeout(5000)
         
         if ajax_response_html:
-            logger.info("Successfully fetched HTML payload from interception!")
-            html_data = ajax_response_html
+            logger.info("Successfully fetched 'Tomorrow' HTML payload from interception!")
+            tomorrow_html = ajax_response_html
         else:
-            logger.warning("Failed to intercept AJAX HTML. Falling back to reading raw DOM...")
-            html_data = await page.content()
+            logger.warning("Failed to intercept 'Tomorrow' AJAX HTML. Only processing 'Today'...")
+            tomorrow_html = ""
 
         logger.info("Closing browser.")
         await browser.close()
+        
+        html_data = today_html + tomorrow_html
 
     if not html_data:
         logger.error("No HTML data to parse.")
