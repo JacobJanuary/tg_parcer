@@ -32,84 +32,7 @@ from display import Colors, format_timestamp, print_event
 logger = logging.getLogger(__name__)
 
 
-# ─── Дедупликатор ивентов ───
-
-_TOKEN_RE = re.compile(r"[a-zA-Zа-яА-ЯёЁ0-9]+")
-
-
-class EventDedup:
-    """
-    Двухуровневая дедупликация:
-      1. Exact hash — title+date+location (быстрый отсев)
-      2. Fuzzy tokens — Jaccard similarity ≥ 0.6 при совпадающей дате
-    """
-
-    SIMILARITY_THRESHOLD = 0.6  # 60% совпадение токенов
-
-    def __init__(self):
-        self._exact: set[str] = set()
-        self._events: list[dict] = []  # для fuzzy
-
-    @staticmethod
-    def _normalize(text: str) -> str:
-        return (text or "").lower().strip()
-
-    @staticmethod
-    def _tokenize(title: str) -> set[str]:
-        """Токенизация → стемминг (первые 5 символов) для русской морфологии."""
-        tokens = _TOKEN_RE.findall(title.lower())
-        # Стемминг: берём первые 5 символов, чтобы «настолки» ≈ «настольные»
-        return {t[:5] for t in tokens if len(t) > 1}
-
-    @staticmethod
-    def _jaccard(a: set, b: set) -> float:
-        if not a or not b:
-            return 0.0
-        return len(a & b) / len(a | b)
-
-    def _exact_key(self, ev: dict) -> str:
-        return (
-            self._normalize(ev.get("title", ""))
-            + "|" + (ev.get("date") or "")
-            + "|" + self._normalize(ev.get("location_name", ""))
-        )
-
-    def _dates_compatible(self, d1: str, d2: str) -> bool:
-        """True если даты совпадают или хотя бы одна TBD."""
-        if d1 == "TBD" or d2 == "TBD" or not d1 or not d2:
-            return True
-        return d1 == d2
-
-    def is_duplicate(self, event: dict) -> bool:
-        """Проверяет и регистрирует ивент. True = дубликат."""
-        # Layer 1: exact hash
-        key = self._exact_key(event)
-        if key in self._exact:
-            return True
-        self._exact.add(key)
-
-        # Layer 2: fuzzy token match
-        tokens = self._tokenize(event.get("title", ""))
-        date = event.get("date", "")
-
-        for stored in self._events:
-            if not self._dates_compatible(date, stored["date"]):
-                continue
-            sim = self._jaccard(tokens, stored["tokens"])
-            if sim >= self.SIMILARITY_THRESHOLD:
-                logger.debug(
-                    f"Fuzzy dedup: «{event.get('title')}» ≈ «{stored['title']}» "
-                    f"(sim={sim:.2f})"
-                )
-                return True
-
-        # Не дубль — запоминаем
-        self._events.append({
-            "title": event.get("title", ""),
-            "date": date,
-            "tokens": tokens,
-        })
-        return False
+from event_dedup import EventDedup
 
 
 # ─── Утилиты медиа ───
@@ -245,8 +168,9 @@ async def main():
     dup_count = 0
     spider_count = 0
 
-    # Дедупликатор ивентов
+    # Дедупликатор ивентов (общий)
     dedup = EventDedup()
+    await dedup.load_from_db(db)
 
     # Активные background tasks (чтобы не были GC'd)
     _bg_tasks: set[asyncio.Task] = set()

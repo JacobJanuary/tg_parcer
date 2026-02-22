@@ -7,6 +7,7 @@ from db import Database
 from ai_analyzer import EventAnalyzer
 from image_generator import EventImageGenerator
 from venue_enricher import VenueEnricher
+from event_dedup import EventDedup
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -34,7 +35,7 @@ async def download_image(url: str, dest_dir: str = "media") -> str | None:
         logger.warning(f"Failed to download image {url}: {e}")
         return None
 
-async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, image_gen: EventImageGenerator, venue_enricher: VenueEnricher, db: Database, ev: dict):
+async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, image_gen: EventImageGenerator, venue_enricher: VenueEnricher, dedup: EventDedup, db: Database, ev: dict):
     async with sem:
         raw_text = ev['raw_text']
         source_url = ev['source_url']
@@ -44,6 +45,9 @@ async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, imag
         result = await ai_analyzer.extract(raw_text, chat_title="todo.today")
         if not result or not result.get("is_event"):
             logger.warning(f"AI rejected event: {raw_text}")
+            return
+            
+        if dedup.is_duplicate(result):
             return
             
         # Enrich Venue (creates new if doesn't exist)
@@ -217,7 +221,10 @@ async def scrape_todo_today():
     # Deduplicate by URL
     unique_events = list({e["source_url"]: e for e in parsed_events}.values())
     logger.info(f"Successfully extracted {len(unique_events)} unique events via aria-label.")
-    
+    # Deduplicator (cross-source DB check)
+    dedup = EventDedup()
+    await dedup.load_from_db(db)
+
     BATCH_SIZE = 10
     SLEEP_BETWEEN_BATCHES = 5
     
@@ -230,7 +237,7 @@ async def scrape_todo_today():
         total_batches = (len(unique_events) + BATCH_SIZE - 1) // BATCH_SIZE
         
         logger.info(f"⏳ Processing batch {batch_num}/{total_batches} ({len(batch)} events)...")
-        tasks = [process_event(sem, ai_analyzer, image_gen, venue_enricher, db, ev) for ev in batch]
+        tasks = [process_event(sem, ai_analyzer, image_gen, venue_enricher, dedup, db, ev) for ev in batch]
         await asyncio.gather(*tasks)
         
         if i + BATCH_SIZE < len(unique_events):
