@@ -31,14 +31,14 @@ class PreScreenResult(BaseModel):
 
 class EventResult(BaseModel):
     is_event: bool = Field(description="True if this is a real offline event")
-    title: Optional[str] = Field(description="Short catchy title, max 30 characters")
+    title: Optional[dict[str, str]] = Field(description="Bilingual title (keys: 'en' and 'ru'), max 30 chars each")
     category: Optional[str] = Field(description="One of 5 categories: Party, Sport, Business, Education, Chill")
     date: Optional[str] = Field(description="Date in YYYY-MM-DD format if specified, otherwise null")
     time: Optional[str] = Field(description="Time in HH:MM format if specified, otherwise null")
     location_name: Optional[str] = Field(description="Venue name for Google Maps lookup, otherwise null")
     price_thb: Optional[int] = Field(description="Price in Thai Baht (0 if free), otherwise null")
-    summary: Optional[str] = Field(description="One sentence summary, max 80 characters")
-    description: Optional[str] = Field(description="Event announcement for listing, 2-4 sentences")
+    summary: Optional[dict[str, str]] = Field(description="Bilingual summary (keys: 'en' and 'ru'), max 80 chars each")
+    description: Optional[dict[str, str]] = Field(description="Bilingual description (keys: 'en' and 'ru'), 2-4 sentences each")
 
 
 # ─── Prompts ───
@@ -70,9 +70,9 @@ RULES:
    b) If NOT found in text, check the CHAT NAME. If the chat name IS a venue or brand (e.g. "SATI YOGA", "Ошо медитация Koh Phangan", "NEWS_NASHEMESTO" → "Mesto"), use that as location_name.
    c) If neither text nor chat name yields a venue → location_name = null.
 4. Date: "today" = {today}, "tomorrow" = next day. Parse Russian: "сегодня"=today, "завтра"=tomorrow. If NO specific date or day is mentioned in the text, ASSUME IT IS HAPPENING TODAY ({today}). Only return null if the text explicitly states it's an ongoing broad announcement without a specific event day.
-5. Title: short catchy title, max 30 characters.
-6. Summary: one sentence, max 80 characters.
-7. Description: attractive event announcement for a listing, 2-4 sentences, max 500 chars. Convey the atmosphere, what will happen and why it's worth attending.
+5. Title: Bilingual JSON object with keys "en" and "ru". Short catchy title, max 30 chars. Translate if needed.
+6. Summary: Bilingual JSON object with keys "en" and "ru". One sentence, max 80 chars. Translate if needed.
+7. Description: Bilingual JSON object with keys "en" and "ru". Attractive event announcement, 2-4 sentences, max 500 chars. Translate if needed.
 8. 🚨 EXCLUSIONS — return is_event=false if ANY of these apply:
    - It is a question ("where is it?", "who knows?"), personal discussion, or service offer
    - It is an event cancellation ("cancelled", "won't be happening", "отмена")

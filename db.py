@@ -493,7 +493,7 @@ class Database:
     # ═══════════════════════════════════════════
 
     @staticmethod
-    def _fingerprint(title: str, event_date: str | None, location: str | None = None) -> str:
+    def _fingerprint(title: str | dict, event_date: str | None, location: str | None = None) -> str:
         """Генерирует fingerprint для дедупликации.
 
         Нормализует title: lowercase, убирает пунктуацию,
@@ -501,7 +501,9 @@ class Database:
         Location больше не участвует в fingerprint во избежание дублей
         из-за незначительных вариаций написания площадки.
         """
-        def _norm(s: str) -> str:
+        def _norm(s) -> str:
+            if isinstance(s, dict):
+                s = s.get("en") or s.get("ru") or str(s)
             s = (s or "").lower().strip()
             s = re.sub(r"[^a-zа-яёа-я0-9 ]", "", s)
             return " ".join(s.split())
@@ -557,7 +559,7 @@ class Database:
                      venue_id, price_thb, summary, description,
                      source_chat_id, source_chat_title, message_id, sender,
                      filter_score, original_text, source, fingerprint, detected_at)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+                VALUES ($1::jsonb,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18)
                 ON CONFLICT (fingerprint) DO UPDATE SET
                     description = COALESCE(EXCLUDED.description, events.description),
                     summary = COALESCE(EXCLUDED.summary, events.summary),
@@ -568,15 +570,15 @@ class Database:
                     event_time = COALESCE(EXCLUDED.event_time, events.event_time)
                 RETURNING id, (xmax = 0) AS is_new, image_path
             """,
-                event.get("title"),
+                json.dumps(event.get("title"), ensure_ascii=False) if event.get("title") else None,
                 event.get("category"),
                 event_date,
                 event.get("time"),
                 event.get("location_name"),
                 venue_id,
                 event.get("price_thb", 0),
-                event.get("summary"),
-                event.get("description"),
+                json.dumps(event.get("summary"), ensure_ascii=False) if event.get("summary") else None,
+                json.dumps(event.get("description"), ensure_ascii=False) if event.get("description") else None,
                 meta.get("chat_id"),
                 meta.get("chat_title"),
                 meta.get("message_id"),
