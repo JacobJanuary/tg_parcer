@@ -15,3 +15,4 @@ unmapped_events.txt
 test_results*.txt
 *.jsonl
 .DS_Store
+media/
