@@ -6,6 +6,7 @@ from playwright.async_api import async_playwright
 from db import Database
 from ai_analyzer import EventAnalyzer
 from image_generator import EventImageGenerator
+from venue_enricher import VenueEnricher
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -33,7 +34,7 @@ async def download_image(url: str, dest_dir: str = "media") -> str | None:
         logger.warning(f"Failed to download image {url}: {e}")
         return None
 
-async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, image_gen: EventImageGenerator, db: Database, ev: dict):
+async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, image_gen: EventImageGenerator, venue_enricher: VenueEnricher, db: Database, ev: dict):
     async with sem:
         raw_text = ev['raw_text']
         source_url = ev['source_url']
@@ -44,6 +45,13 @@ async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, imag
         if not result or not result.get("is_event"):
             logger.warning(f"AI rejected event: {raw_text}")
             return
+            
+        # Enrich Venue (creates new if doesn't exist)
+        if venue_enricher:
+            try:
+                result = await venue_enricher.enrich_event(result)
+            except Exception as e:
+                logger.error(f"Venue enrich error: {e}")
             
         # Download image if available
         local_image_path = await download_image(image_url) if image_url else None
@@ -59,13 +67,14 @@ async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, imag
         
         # Insert to DB
         try:
-            event_id, is_new, _ = await db.insert_event(result, source="todotoday")
+            event_id, is_new, has_image = await db.insert_event(result, source="todotoday")
             if is_new:
                 logger.info(f"✅ inserted NEW event: {result.get('title', {}).get('ru', 'Unknown')} (ID: {event_id})")
             else:
                 logger.info(f"🔄 updated EXISTING event: {result.get('title', {}).get('ru', 'Unknown')} (ID: {event_id})")
 
-            if event_id and local_image_path:
+            # Trigger Image Generation only if image is missing
+            if event_id and local_image_path and (is_new or not has_image):
                 logger.info(f"🎨 Generating high-quality WebP cover using scraped reference image...")
                 filename = await image_gen.generate_cover(
                     raw_tg_text=raw_text, 
@@ -79,6 +88,12 @@ async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, imag
                         logger.info(f"🗑️ Deleted raw scraped GUI image {local_image_path}")
                     except Exception as e:
                         logger.warning(f"Failed to delete scraped image {local_image_path}: {e}")
+            elif local_image_path:
+                # Cleanup raw image if we didn't need to generate a new cover
+                try:
+                    os.remove(local_image_path)
+                except Exception:
+                    pass
 
         except Exception as e:
             logger.error(f"DB insert failed: {e}")
@@ -88,6 +103,10 @@ async def scrape_todo_today():
     await db.connect()
     ai_analyzer = EventAnalyzer()
     image_gen = EventImageGenerator(db)
+    
+    venue_enricher = VenueEnricher(db)
+    await venue_enricher.cache.load_from_pg()
+    logger.info(f"📍 Venue Enricher activated ({len(venue_enricher.cache)} in cache).")
     
     html_data = None
 
@@ -200,10 +219,13 @@ async def scrape_todo_today():
     logger.info(f"Successfully extracted {len(unique_events)} unique events via aria-label.")
     
     sem = asyncio.Semaphore(10)
-    tasks = [process_event(sem, ai_analyzer, image_gen, db, ev) for ev in unique_events]
+    tasks = [process_event(sem, ai_analyzer, image_gen, venue_enricher, db, ev) for ev in unique_events]
     
-    logger.info("Piping raw strings to AI Analyzer & Database...")
+    logger.info("Piping raw strings to AI Analyzer, Venue Enricher, & Database...")
     await asyncio.gather(*tasks)
+    
+    if venue_enricher:
+        venue_enricher.close()
     
     # Close DB connection
     await db.close()
