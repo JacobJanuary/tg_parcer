@@ -133,53 +133,14 @@ async def scrape_todo_today():
         logger.info("Capturing 'Today's' events from initial DOM...")
         today_html = await page.content()
         
-        # We will intercept the AJAX response directly by clicking a UI element
-        logger.info("Setting up AJAX interception for 'Tomorrow'...")
+        # 2. Grab Tomorrow's events by directly visiting the URL
+        logger.info("Visiting /tomorrow/ to capture next day's events...")
+        await page.goto("https://todo.today/koh-phangan/tomorrow/", wait_until="domcontentloaded")
+        logger.info("Waiting for Cloudflare bypass on tomorrow page...")
+        await page.wait_for_timeout(8000)
         
-        ajax_response_html = ""
-        
-        async def handle_response(response):
-            nonlocal ajax_response_html
-            if "admin-ajax.php" in response.url and response.request.method == "POST":
-                try:
-                    payload = await response.json()
-                    if payload.get("success"):
-                        ajax_response_html = payload.get("data", {}).get("html", "")
-                        logger.info("Intercepted valid AJAX response.")
-                except Exception:
-                    pass
-                    
-        page.on("response", handle_response)
-        
-        logger.info("Clicking the 'Tomorrow' filter tab to trigger AJAX fetch...")
-        trigger_js = """
-        () => {
-            const tabs = document.querySelectorAll('.mec-calendar-day');
-            if(tabs && tabs.length > 1) {
-                tabs[1].click(); // Click tomorrow
-                return true;
-            }
-            const filters = document.querySelectorAll('li[data-filter]');
-            if(filters && filters.length > 0) {
-                filters[0].click();
-                return true;
-            }
-            return false;
-        }
-        """
-        clicked = await page.evaluate(trigger_js)
-        if not clicked:
-            logger.warning("Could not find date tabs to click via JS.")
-            
-        logger.info("Waiting 5s for AJAX to return...")
-        await page.wait_for_timeout(5000)
-        
-        if ajax_response_html:
-            logger.info("Successfully fetched 'Tomorrow' HTML payload from interception!")
-            tomorrow_html = ajax_response_html
-        else:
-            logger.warning("Failed to intercept 'Tomorrow' AJAX HTML. Only processing 'Today'...")
-            tomorrow_html = ""
+        tomorrow_html = await page.content()
+        logger.info("Successfully fetched 'Tomorrow' HTML payload!")
 
         logger.info("Closing browser.")
         await browser.close()
