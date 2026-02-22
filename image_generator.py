@@ -1,7 +1,7 @@
 """
 Image Generator Module — Двухступенчатый пайплайн генерации обложек.
 Шаг 1: Gemini Flash (Art Director) пишет промпт.
-Шаг 2: Imagen 3 (Artist) рендерит изображение (3:4, ALLOW_ADULT).
+Шаг 2: Imagen 4 / Imagen 3 (Artist) рендерит изображение (3:4, ALLOW_ADULT), с фоллбеком.
 """
 
 import asyncio
@@ -161,6 +161,7 @@ Return ONLY the English visual prompt, nothing else. Keep it under 60 words.
         fallback_models = [
             "imagen-4.0-fast-generate-001",
             "imagen-4.0-generate-001",
+            "imagen-3.0-generate-001",
             "gemini-2.5-flash-image" 
         ]
             

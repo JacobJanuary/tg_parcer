@@ -217,7 +217,7 @@ async def main():
     try:
         from image_generator import EventImageGenerator
         image_generator = EventImageGenerator(db=db)
-        print("🎨 Image Generator активирован (Imagen 3)")
+        print("🎨 Image Generator активирован (Imagen 4/3 Failover)")
     except Exception as e:
         print(f"⚠️  Image Generator недоступен: {e}")
 
