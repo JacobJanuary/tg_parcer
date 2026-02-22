@@ -1,0 +1,15 @@
+[Unit]
+Description=Spider Telegram Bot Daemon
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=elcrypto
+WorkingDirectory=/home/elcrypto/TG_parcer
+Environment="PATH=/home/elcrypto/TG_parcer/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/home/elcrypto/TG_parcer/venv/bin/python spider_daemon.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

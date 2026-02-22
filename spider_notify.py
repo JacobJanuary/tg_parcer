@@ -530,19 +530,8 @@ async def main():
                 print(f"  ❌ {e}")
 
         print(f"\n✅ Отправлено {sent}/{len(relevant_chats)}")
-        print(f"\n👂 Слушаю нажатия кнопок... (Ctrl+C для выхода)")
-
-        import signal
-        loop = asyncio.get_event_loop()
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, lambda: asyncio.ensure_future(bot_client.disconnect()))
-
-        try:
-            await bot_client.run_until_disconnected()
-        except Exception:
-            pass
-
-        print("\n🔌 Бот остановлен")
+        await bot_client.disconnect()
+        print("\n🔌 Бот отключен (слушатель кнопок теперь работает в spider_daemon.py)")
 
     finally:
         await db.close()
