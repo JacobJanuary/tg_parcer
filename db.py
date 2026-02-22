@@ -193,7 +193,8 @@ CREATE INDEX IF NOT EXISTS idx_events_category ON events(category);
 CREATE INDEX IF NOT EXISTS idx_events_detected ON events(detected_at DESC);
 
 -- GIN trgm index для fuzzy search по title
-CREATE INDEX IF NOT EXISTS idx_events_trgm ON events USING GIN(title gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_events_trgm_en ON events USING GIN((title->>'en') gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_events_trgm_ru ON events USING GIN((title->>'ru') gin_trgm_ops);
 
 -- Хэш-индекс оригинального текста для моментального обнаружения спама
 CREATE INDEX IF NOT EXISTS idx_events_original_text_md5 ON events(md5(original_text));
