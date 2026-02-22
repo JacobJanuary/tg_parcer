@@ -218,11 +218,24 @@ async def scrape_todo_today():
     unique_events = list({e["source_url"]: e for e in parsed_events}.values())
     logger.info(f"Successfully extracted {len(unique_events)} unique events via aria-label.")
     
-    sem = asyncio.Semaphore(10)
-    tasks = [process_event(sem, ai_analyzer, image_gen, venue_enricher, db, ev) for ev in unique_events]
+    BATCH_SIZE = 10
+    SLEEP_BETWEEN_BATCHES = 5
     
-    logger.info("Piping raw strings to AI Analyzer, Venue Enricher, & Database...")
-    await asyncio.gather(*tasks)
+    logger.info(f"Piping {len(unique_events)} events to AI Analytics in batches of {BATCH_SIZE}...")
+    sem = asyncio.Semaphore(BATCH_SIZE)
+    
+    for i in range(0, len(unique_events), BATCH_SIZE):
+        batch = unique_events[i:i + BATCH_SIZE]
+        batch_num = i // BATCH_SIZE + 1
+        total_batches = (len(unique_events) + BATCH_SIZE - 1) // BATCH_SIZE
+        
+        logger.info(f"⏳ Processing batch {batch_num}/{total_batches} ({len(batch)} events)...")
+        tasks = [process_event(sem, ai_analyzer, image_gen, venue_enricher, db, ev) for ev in batch]
+        await asyncio.gather(*tasks)
+        
+        if i + BATCH_SIZE < len(unique_events):
+            logger.info(f"💤 Sleeping {SLEEP_BETWEEN_BATCHES}s to prevent API rate limits...")
+            await asyncio.sleep(SLEEP_BETWEEN_BATCHES)
     
     if venue_enricher:
         venue_enricher.close()
