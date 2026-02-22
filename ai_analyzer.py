@@ -69,7 +69,7 @@ RULES:
    a) First, look for a venue name in the MESSAGE TEXT (direct address, branded name like "AUM", "Prana", "Cafe 13", "Soul Breakfast Phangan").
    b) If NOT found in text, check the CHAT NAME. If the chat name IS a venue or brand (e.g. "SATI YOGA", "Ошо медитация Koh Phangan", "NEWS_NASHEMESTO" → "Mesto"), use that as location_name.
    c) If neither text nor chat name yields a venue → location_name = null.
-4. Date: "today" = {today}, "tomorrow" = next day. Parse Russian: "сегодня"=today, "завтра"=tomorrow. Otherwise null.
+4. Date: "today" = {today}, "tomorrow" = next day. Parse Russian: "сегодня"=today, "завтра"=tomorrow. If NO specific date or day is mentioned in the text, ASSUME IT IS HAPPENING TODAY ({today}). Only return null if the text explicitly states it's an ongoing broad announcement without a specific event day.
 5. Title: short catchy title, max 30 characters.
 6. Summary: one sentence, max 80 characters.
 7. Description: attractive event announcement for a listing, 2-4 sentences, max 500 chars. Convey the atmosphere, what will happen and why it's worth attending.
