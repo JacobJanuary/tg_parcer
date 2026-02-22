@@ -251,8 +251,13 @@ class Database:
             max_size=max_size,
         )
         async with self.pool.acquire() as conn:
-            await conn.execute(DDL)
-        logger.info("✅ PostgreSQL connected, DDL applied")
+            try:
+                await conn.execute(DDL)
+                logger.info("✅ PostgreSQL connected, DDL applied")
+            except asyncpg.exceptions.InsufficientPrivilegeError as e:
+                logger.warning(f"⚠️ PostgreSQL connected, but skipping DDL due to privileges: {e}")
+            except Exception as e:
+                logger.error(f"PostgreSQL DDL error: {e}")
 
     async def close(self):
         """Закрыть pool."""
@@ -589,6 +594,28 @@ class Database:
                 source,
                 fp,
                 datetime.fromisoformat(meta["detected_at"]) if meta.get("detected_at") else datetime.now(),
+            )
+            return row["id"], row["is_new"], bool(row["image_path"])
+        except asyncpg.exceptions.UndefinedColumnError:
+            # Fallback for old schema where the new columns don't exist
+            # Note: without fingerprint, we can't reliably UPSERT duplicates on the DB level
+            # but we can try to insert and just let it happen or ignore it if title conflicts
+            logger.warning("UndefinedColumnError: Falling back to legacy schema insert.")
+            row = await self.pool.fetchrow("""
+                INSERT INTO events
+                    (title, category, event_date, event_time, location_name,
+                     venue_id, price_thb, summary)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                RETURNING id, true AS is_new, image_path
+            """,
+                json.dumps(event.get("title"), ensure_ascii=False) if event.get("title") else str(event.get("title")),
+                event.get("category"),
+                event_date,
+                event.get("time"),
+                event.get("location_name"),
+                venue_id,
+                event.get("price_thb", 0),
+                json.dumps(event.get("summary"), ensure_ascii=False) if event.get("summary") else str(event.get("summary")),
             )
             return row["id"], row["is_new"], bool(row["image_path"])
         except asyncpg.UniqueViolationError:
