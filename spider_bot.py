@@ -192,20 +192,25 @@ def _register_callbacks(bot_client, db):
 
 async def _find_discovered_by_key(db, key: str):
     """Найти discovered_chat по match_key."""
-    if key.startswith("id:"):
-        chat_id = int(key.split(":")[1])
-        return await db.pool.fetchrow(
-            "SELECT id FROM discovered_chats WHERE chat_id = $1", chat_id
-        )
-    elif key.startswith("user:"):
-        username = key.split(":")[1]
-        return await db.pool.fetchrow(
-            "SELECT id FROM discovered_chats WHERE lower(username) = $1",
-            username.lower(),
-        )
-    elif key.startswith("invite:"):
-        invite = key.split(":", 1)[1]
-        return await db.pool.fetchrow(
-            "SELECT id FROM discovered_chats WHERE invite_link = $1", invite
-        )
+    try:
+        if key.startswith("id:"):
+            chat_id = int(key.split(":")[1])
+            return await db.pool.fetchrow(
+                "SELECT id FROM discovered_chats WHERE chat_id = $1", chat_id
+            )
+        elif key.startswith("user:"):
+            username = key.split(":")[1]
+            return await db.pool.fetchrow(
+                "SELECT id FROM discovered_chats WHERE lower(username) = $1",
+                username.lower(),
+            )
+        elif key.startswith("invite:"):
+            invite = key.split(":", 1)[1]
+            return await db.pool.fetchrow(
+                "SELECT id FROM discovered_chats WHERE invite_link = $1", invite
+            )
+    except Exception as e:
+        logger.error(f"Error finding key {key}: {e}")
+        return None
+    return None
     return None
