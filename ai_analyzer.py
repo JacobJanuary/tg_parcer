@@ -29,16 +29,20 @@ logger = logging.getLogger(__name__)
 class PreScreenResult(BaseModel):
     is_event: bool = Field(description="True if the text contains a real offline event")
 
+class BilingualText(BaseModel):
+    en: str = Field(description="English text")
+    ru: str = Field(description="Russian text")
+
 class EventResult(BaseModel):
     is_event: bool = Field(description="True if this is a real offline event")
-    title: Optional[dict[str, str]] = Field(description="Bilingual title (keys: 'en' and 'ru'), max 30 chars each")
+    title: Optional[BilingualText] = Field(description="Bilingual title (keys: 'en' and 'ru'), max 30 chars each")
     category: Optional[str] = Field(description="One of 5 categories: Party, Sport, Business, Education, Chill")
     date: Optional[str] = Field(description="Date in YYYY-MM-DD format if specified, otherwise null")
     time: Optional[str] = Field(description="Time in HH:MM format if specified, otherwise null")
     location_name: Optional[str] = Field(description="Venue name for Google Maps lookup, otherwise null")
     price_thb: Optional[int] = Field(description="Price in Thai Baht (0 if free), otherwise null")
-    summary: Optional[dict[str, str]] = Field(description="Bilingual summary (keys: 'en' and 'ru'), max 80 chars each")
-    description: Optional[dict[str, str]] = Field(description="Bilingual description (keys: 'en' and 'ru'), 2-4 sentences each")
+    summary: Optional[BilingualText] = Field(description="Bilingual summary (keys: 'en' and 'ru'), max 80 chars each")
+    description: Optional[BilingualText] = Field(description="Bilingual description (keys: 'en' and 'ru'), 2-4 sentences each")
 
 
 # ─── Prompts ───
