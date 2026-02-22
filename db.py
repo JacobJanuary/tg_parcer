@@ -527,7 +527,7 @@ class Database:
         # Resolve venue_id
         venue_id = None
         location_name = event.get("location_name", "")
-        if venue_data and venue_data.get("found") and location_name:
+        if location_name:
             # Exact query match
             v = await self.get_venue(location_name)
             if v:
