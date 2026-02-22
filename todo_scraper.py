@@ -184,14 +184,9 @@ async def scrape_todo_today():
         href = link_tag.get("href", "")
         aria_label = link_tag.get("aria-label", "")
         
-        # Extract the background image URL from the style tag
-        # e.g. background-image: url('https://todo.today/wp-content/uploads/something.jpg');
-        style_attr = link_tag.get("style", "")
-        image_url = None
-        if "url('" in style_attr:
-            image_url = style_attr.split("url('")[1].split("')")[0]
-        elif "url(" in style_attr:
-            image_url = style_attr.split("url(")[1].split(")")[0]
+        # Extract the image URL from the img tag
+        img_tag = box.find("img")
+        image_url = img_tag.get("src") if img_tag else None
         
         if aria_label:
             parsed_events.append({
