@@ -349,8 +349,8 @@ async def main():
             await asyncio.sleep(config.AUTO_JOIN_CHECK_INTERVAL)
 
             try:
-                # Получаем чаты со status=new и resolved=true
-                pending = await db.get_all_discovered(status="new")
+                # Получаем чаты со status=approved и resolved=true
+                pending = await db.get_all_discovered(status="approved")
                 resolved_pending = [r for r in pending if r.get("resolved") and r.get("chat_id")]
 
                 if not resolved_pending:
@@ -367,8 +367,8 @@ async def main():
                         title = row.get("title") or str(chat_id)
                         chat_type = row.get("type") or "megagroup"
 
-                        # 1. Обновляем статус в discovered
-                        await db.update_discovered(row["id"], status="approved")
+                        # 1. Обновляем статус в discovered (чтобы больше не обрабатывать)
+                        await db.update_discovered(row["id"], status="monitoring")
 
                         # 2. Добавляем в active chats
                         await db.upsert_chat(
@@ -389,7 +389,7 @@ async def main():
                         if spider:
                             for dc in spider.discovered:
                                 if dc.chat_id == chat_id:
-                                    dc.status = "approved"
+                                    dc.status = "monitoring"
                                     break
                             spider.known_keys.add(f"id:{chat_id}")
 
