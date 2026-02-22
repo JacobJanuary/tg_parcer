@@ -5,6 +5,7 @@ from playwright.async_api import async_playwright
 
 from db import Database
 from ai_analyzer import EventAnalyzer
+from image_generator import EventImageGenerator
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -32,7 +33,7 @@ async def download_image(url: str, dest_dir: str = "media") -> str | None:
         logger.warning(f"Failed to download image {url}: {e}")
         return None
 
-async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, db: Database, ev: dict):
+async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, image_gen: EventImageGenerator, db: Database, ev: dict):
     async with sem:
         raw_text = ev['raw_text']
         source_url = ev['source_url']
@@ -56,12 +57,6 @@ async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, db: 
             "original_text": f"{raw_text}\\nSource: {source_url}"
         }
         
-        if local_image_path:
-            # We inject it into the final dictionary for the DB insertion signature
-            # if we extend the `db.insert_event` schema to support manual images.
-            # Currently `db.insert_event` doesn't accept an explicit image_path argument. 
-            pass # TODO: Add image_path to db insert
-        
         # Insert to DB
         try:
             event_id, is_new, _ = await db.insert_event(result, source="todotoday")
@@ -69,6 +64,22 @@ async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, db: 
                 logger.info(f"✅ inserted NEW event: {result.get('title', {}).get('ru', 'Unknown')} (ID: {event_id})")
             else:
                 logger.info(f"🔄 updated EXISTING event: {result.get('title', {}).get('ru', 'Unknown')} (ID: {event_id})")
+
+            if event_id and local_image_path:
+                logger.info(f"🎨 Generating high-quality WebP cover using scraped reference image...")
+                filename = await image_gen.generate_cover(
+                    raw_tg_text=raw_text, 
+                    category=result.get("category", "General"), 
+                    event_id=event_id, 
+                    reference_image_path=local_image_path
+                )
+                if filename:
+                    try:
+                        os.remove(local_image_path)
+                        logger.info(f"🗑️ Deleted raw scraped GUI image {local_image_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete scraped image {local_image_path}: {e}")
+
         except Exception as e:
             logger.error(f"DB insert failed: {e}")
 
@@ -76,6 +87,7 @@ async def scrape_todo_today():
     db = Database()
     await db.connect()
     ai_analyzer = EventAnalyzer()
+    image_gen = EventImageGenerator(db)
     
     html_data = None
 
@@ -187,7 +199,7 @@ async def scrape_todo_today():
     logger.info(f"Successfully extracted {len(unique_events)} unique events via aria-label.")
     
     sem = asyncio.Semaphore(10)
-    tasks = [process_event(sem, ai_analyzer, db, ev) for ev in unique_events]
+    tasks = [process_event(sem, ai_analyzer, image_gen, db, ev) for ev in unique_events]
     
     logger.info("Piping raw strings to AI Analyzer & Database...")
     await asyncio.gather(*tasks)

@@ -43,7 +43,7 @@ class EventImageGenerator:
         os.makedirs(self.media_dir, exist_ok=True)
         self.concurrency_limit = asyncio.Semaphore(2)
 
-    def _sync_get_prompt(self, raw_tg_text: str, category: str, override_prompt: str = None) -> str | None:
+    def _sync_get_prompt(self, raw_tg_text: str, category: str, override_prompt: str = None, reference_image_path: str = None) -> str | None:
         """ШАГ 1: AI-Арт-Директор пишет промпт (Prompt-Inception)"""
         if override_prompt:
             logger.info("🎬 Используем переданный вручную промпт для художника.")
@@ -51,24 +51,35 @@ class EventImageGenerator:
 
         director_prompt = f"""
 You are an expert Art Director for a premium event app in Koh Phangan.
-Read this raw event description and write a highly detailed visual prompt for an AI image generator.
+Read this raw event description (and analyze the attached reference image if provided). 
+Write a highly detailed visual prompt for an AI image generator.
 
 CRITICAL RULES FOR THE IMAGE PROMPT:
 1. Describe a cinematic, highly aesthetic, photorealistic scene.
 2. ABSOLUTELY NO TEXT, NO LETTERS, NO WORDS, NO SIGNBOARDS, NO LOGOS in the image. It must be clean background art.
 3. Capture the specific vibe (e.g., dark jungle techno, sunny beach yoga, cozy acoustic sunset).
-4. Include keywords: "Cinematic, 8k resolution, highly detailed, tropical Koh Phangan aesthetic, premium photography".
+4. If a reference image is provided, recreate its exact core subject, mood, colors, and setting, but vividly enhance it into a premium 8k masterpiece.
+5. Include keywords: "Cinematic, 8k resolution, highly detailed, tropical Koh Phangan aesthetic, premium photography".
 
 Event Category: {category}
 Raw Event Text: "{raw_tg_text}"
 
 Return ONLY the English visual prompt, nothing else. Keep it under 60 words.
 """
+        contents_list = [director_prompt]
+        if reference_image_path and os.path.exists(reference_image_path):
+            try:
+                ref_img = Image.open(reference_image_path)
+                logger.info(f"📸 Добавляем картинку {reference_image_path} как референс для Арт-Директора.")
+                contents_list.append(ref_img)
+            except Exception as e:
+                logger.warning(f"Failed to load reference image {reference_image_path}: {e}")
+
         try:
             logger.debug(f"🕵️‍♂️ 1. Арт-Директор анализирует текст [{category}]...")
             response = self.client.models.generate_content(
                 model='gemini-2.5-flash',
-                contents=director_prompt,
+                contents=contents_list,
             )
             image_prompt = response.text.strip()
             logger.info(f"🎬 2. Промпт готов ({len(image_prompt)} симв.)")
@@ -139,11 +150,11 @@ Return ONLY the English visual prompt, nothing else. Keep it under 60 words.
             
         raise ValueError(f"No images returned from {model_name} API")
 
-    async def generate_cover(self, raw_tg_text: str, category: str, event_id: int = None) -> str | None:
+    async def generate_cover(self, raw_tg_text: str, category: str, event_id: int = None, reference_image_path: str = None) -> str | None:
         """Асинхронная обертка с семафором и каскадным Failover (Rate Limit Protector)."""
         
         # 1. Получаем промпт ОДИН раз (вне цикла ретраев)
-        image_prompt = await asyncio.to_thread(self._sync_get_prompt, raw_tg_text, category)
+        image_prompt = await asyncio.to_thread(self._sync_get_prompt, raw_tg_text, category, override_prompt=None, reference_image_path=reference_image_path)
         if not image_prompt:
             return None
             
