@@ -50,7 +50,7 @@ async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, imag
             
         # Append meta
         result["_meta"] = {
-            "chat_id": 0,
+            "chat_id": None,
             "chat_title": "todo.today",
             "message_id": 0,
             "sender": "scraper",
