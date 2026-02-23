@@ -9,3 +9,4 @@ Pillow>=10.0.0
 Faker>=33.3.0
 playwright
 beautifulsoup4>=2.0.0
+python-dateutil>=2.9.0

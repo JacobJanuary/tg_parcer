@@ -78,22 +78,11 @@ class EventDedup:
         if re.match(r"^\d{4}-\d{2}-\d{2}", d):
             return d[:10]
             
-        # Parse "16 February" or similar
-        from datetime import datetime
+        from dateutil import parser
         try:
-            # Assume current year
-            year = datetime.now().year
-            # Attempt naive parse 
-            parsed = datetime.strptime(f"{d} {year}", "%d %B %Y")
+            # fuzzy=True robustly ignores "Tuesday," "th", "nd" around the date tokens
+            parsed = parser.parse(d, fuzzy=True)
             return parsed.strftime("%Y-%m-%d")
-        except:
-             pass
-             
-        try:
-             # Just in case they provide month first
-             year = datetime.now().year
-             parsed = datetime.strptime(f"{d} {year}", "%B %d %Y")
-             return parsed.strftime("%Y-%m-%d")
         except:
              return d[:10]
 
