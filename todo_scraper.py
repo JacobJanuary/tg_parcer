@@ -48,6 +48,7 @@ async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, imag
             return
             
         if dedup.is_duplicate(result):
+            logger.info(f"🚫 Duplicate skipped: {result.get('title', {})}")
             return
             
         # Enrich Venue (creates new if doesn't exist)

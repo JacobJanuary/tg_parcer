@@ -76,15 +76,15 @@ Telegram-чаты/каналы, которые listener мониторит в р
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
 | `id` | `serial` | **NO** | auto | PK |
-| `title` | `text` | **NO** | — | Название ивента (до 30 символов) |
+| `title` | `jsonb` | **NO** | — | Название ивента (двуязычный JSON) |
 | `category` | `text` | YES | — | `Party` / `Sport` / `Business` / `Education` / `Chill` |
 | `event_date` | `date` | YES | — | Дата проведения |
 | `event_time` | `text` | YES | — | Время в формате `HH:MM` |
 | `location_name` | `text` | YES | — | Название площадки (как извлёк AI) |
 | `venue_id` | `integer` | YES | — | FK → `venues.id` (после enrichment) |
 | `price_thb` | `integer` | YES | `0` | Цена в батах (0 = бесплатно) |
-| `summary` | `text` | YES | — | Краткое описание (до 80 символов) |
-| `description` | `text` | YES | — | Полное описание (2-4 предложения) |
+| `summary` | `jsonb` | YES | — | Краткое описание (двуязычный JSON) |
+| `description` | `jsonb` | YES | — | Полное описание (двуязычный JSON) |
 | `source_chat_id` | `bigint` | YES | — | FK → `chats.id`, откуда пришло |
 | `source_chat_title` | `text` | YES | — | Название чата-источника |
 | `message_id` | `bigint` | YES | — | Telegram message ID |

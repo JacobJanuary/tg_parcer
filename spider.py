@@ -390,7 +390,12 @@ class ChatSpider:
                     self.known_keys.add(id_key)
 
                 resolved_count += 1
-                logger.info(f"🕷️ Resolved: {dc.title} (@{dc.username}) — {dc.type}, {dc.participants_count} уч.")
+                logger.info(f"🕷️ Resolved: {dc.title} (@{dc.username}) — {dc.type}, {dc.participants_count} уч. [Status: {dc.status}]")
+                if self.db:
+                    await self.db.upsert_discovered(
+                        username=dc.username, chat_id=dc.chat_id, title=dc.title, chat_type=dc.type,
+                        participants_count=dc.participants_count, resolved=True, status=dc.status, increment_seen=False
+                    )
 
             except Exception as e:
                 logger.debug(f"Spider: не удалось resolve @{dc.username}: {e}")
@@ -435,8 +440,8 @@ class ChatSpider:
                         self.known_keys.add(id_key)
 
                     resolved_count += 1
-                    logger.info(f"🕷️ Invite resolved (already in): {dc.title} — {dc.participants_count} уч.")
-
+                    logger.info(f"🕷️ Invite resolved (already in): {dc.title} — {dc.participants_count} уч. [Status: {dc.status}]")
+                
                 # ChatInvite = мы НЕ в чате, но видим инфо
                 elif hasattr(result, "title"):
                     dc.title = result.title
@@ -445,6 +450,12 @@ class ChatSpider:
                     dc.type = "channel" if getattr(result, "broadcast", False) else "megagroup"
                     resolved_count += 1
                     logger.info(f"🕷️ Invite resolved: {dc.title} — {dc.participants_count} уч.")
+                    
+                if self.db:
+                    await self.db.upsert_discovered(
+                        invite_link=dc.invite_link, chat_id=dc.chat_id, title=dc.title, chat_type=dc.type,
+                        participants_count=dc.participants_count, resolved=True, status=dc.status, increment_seen=False
+                    )
 
             except Exception as e:
                 err = str(e)
@@ -459,7 +470,6 @@ class ChatSpider:
 
             await asyncio.sleep(1)
 
-        self.save()
         return resolved_count
 
     # ─── Статистика ───

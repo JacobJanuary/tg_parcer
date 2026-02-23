@@ -167,15 +167,15 @@ CREATE INDEX IF NOT EXISTS idx_venues_normalized ON venues(name_normalized) WHER
 -- 4. Ивенты
 CREATE TABLE IF NOT EXISTS events (
     id               SERIAL PRIMARY KEY,
-    title            TEXT NOT NULL,
+    title            JSONB NOT NULL,
     category         TEXT,
     event_date       DATE,
     event_time       TEXT,
     location_name    TEXT,
     venue_id         INTEGER REFERENCES venues(id) ON DELETE SET NULL,
     price_thb        INTEGER DEFAULT 0,
-    summary          TEXT,
-    description      TEXT,
+    summary          JSONB,
+    description      JSONB,
     source_chat_id   BIGINT REFERENCES chats(id) ON DELETE SET NULL,
     source_chat_title TEXT,
     message_id       BIGINT,
@@ -307,9 +307,9 @@ class Database:
         chat_type: str | None = None,
         source_type: str = "forward",
         found_in_chat_id: int | None = None,
-        participants_count: int | None = None,
         status: str = "new",
         resolved: bool = False,
+        increment_seen: bool = True,
     ) -> int:
         """
         Upsert discovery: если уже есть (по username/invite/chat_id) —
@@ -336,20 +336,32 @@ class Database:
             )
 
         if existing:
-            # Обновляем times_seen + last_seen
-            await self.pool.execute("""
-                UPDATE discovered_chats
-                SET times_seen = times_seen + 1,
-                    last_seen = now(),
-                    title = COALESCE($2, title),
-                    participants_count = COALESCE($3, participants_count),
-                    resolved = CASE WHEN $4 THEN true ELSE resolved END,
-                    chat_id = COALESCE($5, chat_id),
-                    type = COALESCE($6, type),
-                    status = CASE WHEN $7 != 'new' THEN $7 ELSE status END
-                WHERE id = $1
-            """, existing["id"], title, participants_count, resolved,
-                 chat_id, chat_type, status)
+            if increment_seen:
+                await self.pool.execute("""
+                    UPDATE discovered_chats
+                    SET times_seen = times_seen + 1,
+                        last_seen = now(),
+                        title = COALESCE($2, title),
+                        participants_count = COALESCE($3, participants_count),
+                        resolved = CASE WHEN $4 THEN true ELSE resolved END,
+                        chat_id = COALESCE($5, chat_id),
+                        type = COALESCE($6, type),
+                        status = CASE WHEN $7 != 'new' THEN $7 ELSE status END
+                    WHERE id = $1
+                """, existing["id"], title, participants_count, resolved,
+                     chat_id, chat_type, status)
+            else:
+                await self.pool.execute("""
+                    UPDATE discovered_chats
+                    SET title = COALESCE($2, title),
+                        participants_count = COALESCE($3, participants_count),
+                        resolved = CASE WHEN $4 THEN true ELSE resolved END,
+                        chat_id = COALESCE($5, chat_id),
+                        type = COALESCE($6, type),
+                        status = CASE WHEN $7 != 'new' THEN $7 ELSE status END
+                    WHERE id = $1
+                """, existing["id"], title, participants_count, resolved,
+                     chat_id, chat_type, status)
             return existing["id"]
 
         # Вставляем новый
@@ -577,15 +589,15 @@ class Database:
                     event_time = COALESCE(EXCLUDED.event_time, events.event_time)
                 RETURNING id, (xmax = 0) AS is_new, image_path
             """,
-                json.dumps(event.get("title"), ensure_ascii=False) if event.get("title") else None,
+                json.dumps(event.get("title") or {"en": "N/A", "ru": "N/A"}, ensure_ascii=False),
                 event.get("category"),
                 event_date,
                 event.get("time"),
                 event.get("location_name"),
                 venue_id,
                 event.get("price_thb", 0),
-                json.dumps(event.get("summary"), ensure_ascii=False) if event.get("summary") else None,
-                json.dumps(event.get("description"), ensure_ascii=False) if event.get("description") else None,
+                json.dumps(event.get("summary") or {"en": "N/A", "ru": "N/A"}, ensure_ascii=False),
+                json.dumps(event.get("description") or {"en": "", "ru": ""}, ensure_ascii=False),
                 meta.get("chat_id"),
                 meta.get("chat_title"),
                 meta.get("message_id"),

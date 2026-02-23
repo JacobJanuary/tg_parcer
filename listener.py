@@ -220,13 +220,29 @@ async def main():
                             else:
                                 dc.status = "rejected"
                                 dc.type = "user"
-                            # Сохраняем ID в known_keys
-                            spider.known_keys.add(f"id:{entity.id}")
+                            id_key = f"id:{entity.id}"
+                            if id_key in spider.known_keys:
+                                dc.status = "self"
+                            spider.known_keys.add(id_key)
+                            
                             label = dc.title or username
                             members = f" ({dc.participants_count} уч.)" if dc.participants_count else ""
-                            print(f"  {Colors.MAGENTA}🕷️ Resolved: {label} ({dc.type}){members}{Colors.RESET}")
+                            print(f"  {Colors.MAGENTA}🕷️ Resolved: {label} ({dc.type}){members} [Status: {dc.status}]{Colors.RESET}")
                             resolved_dc = dc
                             break
+
+                    if resolved_dc:
+                        # Уведомляем базу данных, что чат был срезолвлен (не увеличиваем times_seen)
+                        await db.upsert_discovered(
+                            username=username,
+                            chat_id=resolved_dc.chat_id,
+                            title=resolved_dc.title,
+                            chat_type=resolved_dc.type,
+                            participants_count=resolved_dc.participants_count,
+                            resolved=True,
+                            status=resolved_dc.status,
+                            increment_seen=False
+                        )
 
                 elif invite_link:
                     from telethon.tl.functions.messages import CheckChatInviteRequest
@@ -250,14 +266,27 @@ async def main():
                                 dc.title = result.title
                                 dc.participants_count = getattr(result, "participants_count", None)
                             dc.resolved = True
-                            print(f"  {Colors.MAGENTA}🕷️ Invite resolved: {dc.title}{Colors.RESET}")
+                            print(f"  {Colors.MAGENTA}🕷️ Invite resolved: {dc.title} [Status: {dc.status}]{Colors.RESET}")
                             resolved_dc = dc
                             break
 
-                spider.save()
+                    if resolved_dc:
+                        # Сохраняем резолв в БД
+                        await db.upsert_discovered(
+                            invite_link=invite_link,
+                            chat_id=resolved_dc.chat_id,
+                            title=resolved_dc.title,
+                            chat_type=resolved_dc.type,
+                            participants_count=resolved_dc.participants_count,
+                            resolved=True,
+                            status=resolved_dc.status,
+                            increment_seen=False
+                        )
 
-                # Уведомляем через бота (только resolved чаты)
-                if spider_bot and resolved_dc and resolved_dc.resolved and resolved_dc.status != "rejected":
+                spider.save() # still NO-OP, but we synced manually to PG above
+
+                # Уведомляем через бота (ТОЛЬКО НОВЫЕ чаты)
+                if spider_bot and resolved_dc and resolved_dc.resolved and resolved_dc.status == "new":
                     await spider_bot.notify_new_chat(resolved_dc)
 
             except Exception as e:

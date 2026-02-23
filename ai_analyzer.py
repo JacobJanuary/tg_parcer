@@ -77,12 +77,13 @@ RULES:
 5. Title: Bilingual JSON object with keys "en" and "ru". Short catchy title, max 30 chars. Translate if needed.
 6. Summary: Bilingual JSON object with keys "en" and "ru". One sentence, max 80 chars. Translate if needed.
 7. Description: Bilingual JSON object with keys "en" and "ru". Attractive event announcement, 2-4 sentences, max 500 chars. Translate if needed.
-8. 🚨 EXCLUSIONS — return is_event=false if ANY of these apply:
+8. Text Cleanliness: ALL text fields (title, summary, description) MUST be plain text. STRICTLY NO HTML tags, NO Markdown formatting (like **, _, #, ```), NO emojis in the text, and NO conversational filler. Just the pure, clean text.
+9. 🚨 EXCLUSIONS — return is_event=false if ANY of these apply:
    - It is a question ("where is it?", "who knows?"), personal discussion, or service offer
    - It is an event cancellation ("cancelled", "won't be happening", "отмена")
    - location_name is null after checking BOTH text AND chat name
    STRICT RULE: An event without a location is NOT an event. DOUBLE-CHECK: before returning is_event=true, verify that location_name is NOT null/empty.
-9. IMPORTANT: extract ONLY ONE object (the nearest/most relevant event).
+10. IMPORTANT: extract ONLY ONE object (the nearest/most relevant event).
 
 IMPORTANT: The message text may be in Russian, English, or mixed languages. Analyze content regardless of language."""
 
@@ -315,10 +316,17 @@ class EventAnalyzer:
         if not result.get("is_event"):
             return {"is_event": False}
 
-        required = ["title", "category", "summary"]
-        for field in required:
-            if field not in result:
-                result[field] = "N/A"
+        required_bilingual = ["title", "summary", "description"]
+        for field in required_bilingual:
+            val = result.get(field)
+            if not isinstance(val, dict):
+                val_str = str(val) if val is not None else "N/A"
+                if val_str.lower() in ("none", "null", ""):
+                    val_str = "N/A"
+                result[field] = {"en": val_str, "ru": val_str}
+            else:
+                if not val.get("en"): val["en"] = "N/A"
+                if not val.get("ru"): val["ru"] = "N/A"
 
         valid_categories = {"Party", "Sport", "Business", "Education", "Chill"}
         if result.get("category") not in valid_categories:
@@ -332,7 +340,6 @@ class EventAnalyzer:
         result.setdefault("date", "TBD")
         result.setdefault("time", "TBD")
         result.setdefault("location_name", "TBD")
-        result.setdefault("description", "")
 
         return result
 

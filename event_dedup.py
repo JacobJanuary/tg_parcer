@@ -24,7 +24,7 @@ class EventDedup:
         try:
             # We get both TODOTODAY and LISTENER events
             rows = await db.pool.fetch(f"""
-                SELECT title->>'en' as title_en, title->>'ru' as title_ru, event_date, location_name
+                SELECT title->>'en' as title_en, title->>'ru' as title_ru, event_date, event_time, location_name
                 FROM events
                 WHERE detected_at >= NOW() - INTERVAL '{days} days'
             """)
@@ -34,6 +34,7 @@ class EventDedup:
                 ev = {
                     "title": title,
                     "date": ev_time,
+                    "time": r.get("event_time") or "",
                     "location_name": r["location_name"] or ""
                 }
                 
@@ -43,6 +44,7 @@ class EventDedup:
                 self._events.append({
                     "title": ev["title"],
                     "date": ev["date"],
+                    "time": ev["time"],
                     "tokens": self._tokenize(ev["title"]),
                 })
             logger.info(f"🛡️ EventDedup loaded {len(self._events)} recent events from DB.")
@@ -78,6 +80,13 @@ class EventDedup:
         if re.match(r"^\d{4}-\d{2}-\d{2}", d):
             return d[:10]
             
+        lower_d = d.lower()
+        from datetime import datetime, timedelta
+        if lower_d == "today":
+            return datetime.today().strftime("%Y-%m-%d")
+        elif lower_d == "tomorrow":
+            return (datetime.today() + timedelta(days=1)).strftime("%Y-%m-%d")
+
         from dateutil import parser
         try:
             # fuzzy=True robustly ignores "Tuesday," "th", "nd" around the date tokens
