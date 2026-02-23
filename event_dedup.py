@@ -102,6 +102,15 @@ class EventDedup:
             return True
         return pd1 == pd2
 
+    def _times_compatible(self, t1: str, t2: str) -> bool:
+        t1 = str(t1).strip()
+        t2 = str(t2).strip()
+        if not t1 or not t2 or t1 == "TBD" or t2 == "TBD" or t1 == "None" or t2 == "None":
+            return True
+            
+        # extract first 5 chars e.g. 18:00
+        return t1[:5] == t2[:5]
+
     def is_duplicate(self, event: dict) -> bool:
         """Returns True if the event is a duplicate."""
         key = self._exact_key(event)
@@ -111,11 +120,17 @@ class EventDedup:
 
         tokens = self._tokenize(event.get("title", ""))
         date = str(event.get("date", ""))[:10]
+        time = str(event.get("time", ""))[:5]
 
         for stored in self._events:
             if not self._dates_compatible(date, stored["date"]):
                 continue
-            sim = self._jaccard(tokens, stored["tokens"])
+                
+            stored_time = stored.get("time", "")
+            if not self._times_compatible(time, stored_time):
+                continue
+                
+            sim = self._jaccard(tokens, stored.get("tokens", set()))
             if sim >= self.SIMILARITY_THRESHOLD:
                 logger.info(
                     f"🛑 Pre-flight fuzzy dedup caught: «{event.get('title')}» ≈ «{stored['title']}» (sim={sim:.2f})"
@@ -125,6 +140,7 @@ class EventDedup:
         self._events.append({
             "title": event.get("title", ""),
             "date": date,
+            "time": time,
             "tokens": tokens,
         })
         return False

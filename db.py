@@ -530,9 +530,10 @@ class Database:
         if location_name:
             # Exact query match
             v = await self.get_venue(location_name)
-            if v:
-                venue_id = v["id"]
-            else:
+            if v and v.get("found"):
+                # `get_venue` query: SELECT v.*, va.venue_id FROM venue_aliases va LEFT JOIN venues v ...
+                venue_id = v.get("venue_id")
+            elif not v or not v.get("found"):
                 # Fallback: normalized name match
                 normalized = _normalize_name(location_name)
                 if normalized:
