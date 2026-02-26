@@ -159,10 +159,11 @@ Return ONLY the English visual prompt, nothing else. Keep it under 60 words.
             return None
             
         fallback_models = [
-            "imagen-4.0-fast-generate-001",
             "imagen-4.0-generate-001",
-            "imagen-3.0-generate-001",
-            "gemini-2.5-flash-image" 
+            "imagen-4.0-fast-generate-001",
+            "gemini-2.5-flash-image",
+            "gemini-2.5-flash-image",
+            "gemini-2.5-flash-image"
         ]
             
         async with self.concurrency_limit:

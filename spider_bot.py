@@ -37,12 +37,11 @@ class SpiderBot:
 
         try:
             self._bot_client = TelegramClient(
-                "spider_bot_session",
+                "spider_sender_session",
                 int(config.API_ID),
                 config.API_HASH,
             )
             await self._bot_client.start(bot_token=config.BOT_TOKEN)
-            _register_callbacks(self._bot_client, self.db)
 
             me = await self._bot_client.get_me()
             logger.info(f"Spider Bot запущен: @{me.username}")
@@ -149,13 +148,16 @@ def _register_callbacks(bot_client, db):
 
             msg = await event.get_message()
             await event.edit(
-                msg.text + "\n\n❌ <b>Отклонено</b>",
+                msg.text + "\n\n❌ <b>Отклонено. Удаляю через 2 сек...</b>",
                 buttons=None,
                 parse_mode="html",
             )
             await event.answer("Чат отклонён")
             print(f"  🔴 Reject callback: {key}")
             logger.info(f"Reject callback: {key}")
+
+            await asyncio.sleep(2)
+            await msg.delete()
 
         except Exception as e:
             logger.error(f"Reject callback error: {e}")

@@ -102,19 +102,8 @@ async def main():
     except Exception as e:
         print(f"⚠️  Spider недоступен: {e}")
 
-    # 2b. Spider Bot
+    # 2b. Spider Bot — инициализируется ПОСЛЕ авторизации Telegram (нужен client)
     spider_bot = None
-    if spider and config.BOT_TOKEN:
-        try:
-            from spider_bot import SpiderBot
-            spider_bot = SpiderBot(client, db=db)
-            if await spider_bot.start():
-                print(f"🤖 Spider Bot активирован (канал: {config.SPIDER_CHANNEL_ID})")
-            else:
-                spider_bot = None
-        except Exception as e:
-            print(f"⚠️  Spider Bot недоступен: {e}")
-            spider_bot = None
 
     # 3. Инициализация AI
     try:
@@ -151,6 +140,19 @@ async def main():
 
     me = await client.get_me()
     print(f"\n✅ Авторизован: {me.first_name} (@{me.username or 'N/A'})")
+
+    # 2b. Spider Bot (после авторизации — нужен client)
+    if spider and config.BOT_TOKEN:
+        try:
+            from spider_bot import SpiderBot
+            spider_bot = SpiderBot(client, db=db)
+            if await spider_bot.start():
+                print(f"🤖 Spider Bot активирован (канал: {config.SPIDER_CHANNEL_ID})")
+            else:
+                spider_bot = None
+        except Exception as e:
+            print(f"⚠️  Spider Bot недоступен: {e}")
+            spider_bot = None
 
     # 5. Резолв чатов
     resolved_chats = await chats.resolve(client, chat_ids)
@@ -452,6 +454,26 @@ async def main():
                     ai_result["date"] = None
                 if ai_result.get("time") in ("TBD", "N/A", "", None):
                     ai_result["time"] = None
+
+                # Reject events without a date — they are likely not real announcements
+                if ai_result.get("date") is None:
+                    title_en = (ai_result.get("title") or {}).get("en", "?")
+                    logger.info(f"  ⏭️  Пропуск (нет даты): {title_en}")
+                    return
+
+                # Reject events too far in the future or too far in the past
+                try:
+                    from datetime import date as _date, timedelta
+                    ev_date = _date.fromisoformat(ai_result["date"])
+                    title_en = (ai_result.get("title") or {}).get("en", "?")
+                    if ev_date > _date.today() + timedelta(days=60):
+                        logger.info(f"  ⏭️  Пропуск (далёкое будущее): {title_en} date={ev_date}")
+                        return
+                    if ev_date < _date.today() - timedelta(days=14):
+                        logger.info(f"  ⏭️  Пропуск (прошедшее): {title_en} date={ev_date}")
+                        return
+                except (ValueError, KeyError):
+                    pass
 
                 event_count += 1
 

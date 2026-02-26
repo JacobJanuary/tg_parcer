@@ -8,6 +8,7 @@ from ai_analyzer import EventAnalyzer
 from image_generator import EventImageGenerator
 from venue_enricher import VenueEnricher
 from event_dedup import EventDedup
+from label_cache import LabelCache
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -35,7 +36,7 @@ async def download_image(url: str, dest_dir: str = "media") -> str | None:
         logger.warning(f"Failed to download image {url}: {e}")
         return None
 
-async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, image_gen: EventImageGenerator, venue_enricher: VenueEnricher, dedup: EventDedup, db: Database, ev: dict):
+async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, image_gen: EventImageGenerator, venue_enricher: VenueEnricher, dedup: EventDedup, db: Database, ev: dict, label_cache: LabelCache):
     async with sem:
         raw_text = ev['raw_text']
         source_url = ev['source_url']
@@ -45,10 +46,12 @@ async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, imag
         result = await ai_analyzer.extract(raw_text, chat_title="todo.today")
         if not result or not result.get("is_event"):
             logger.warning(f"AI rejected event: {raw_text}")
+            label_cache.add(raw_text)
             return
             
         if dedup.is_duplicate(result):
             logger.info(f"🚫 Duplicate skipped: {result.get('title', {})}")
+            label_cache.add(raw_text)
             return
             
         # Enrich Venue (creates new if doesn't exist)
@@ -73,6 +76,7 @@ async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, imag
         # Insert to DB
         try:
             event_id, is_new, has_image = await db.insert_event(result, source="todotoday")
+            label_cache.add(raw_text)
             if is_new:
                 logger.info(f"✅ inserted NEW event: {result.get('title', {}).get('ru', 'Unknown')} (ID: {event_id})")
             else:
@@ -183,6 +187,15 @@ async def scrape_todo_today():
     # Deduplicate by URL
     unique_events = list({e["source_url"]: e for e in parsed_events}.values())
     logger.info(f"Successfully extracted {len(unique_events)} unique events via aria-label.")
+
+    # Pre-filter: skip events already in local aria-label cache
+    label_cache = LabelCache()
+    label_cache.load()
+    new_events = [e for e in unique_events if not label_cache.contains(e["raw_text"])]
+    cached_count = len(unique_events) - len(new_events)
+    if cached_count:
+        logger.info(f"⚡ Label cache: {cached_count} known, {len(new_events)} new → sending to AI")
+
     # Deduplicator (cross-source DB check)
     dedup = EventDedup()
     await dedup.load_from_db(db)
@@ -190,21 +203,24 @@ async def scrape_todo_today():
     BATCH_SIZE = 10
     SLEEP_BETWEEN_BATCHES = 5
     
-    logger.info(f"Piping {len(unique_events)} events to AI Analytics in batches of {BATCH_SIZE}...")
+    logger.info(f"Piping {len(new_events)} events to AI Analytics in batches of {BATCH_SIZE}...")
     sem = asyncio.Semaphore(BATCH_SIZE)
     
-    for i in range(0, len(unique_events), BATCH_SIZE):
-        batch = unique_events[i:i + BATCH_SIZE]
+    for i in range(0, len(new_events), BATCH_SIZE):
+        batch = new_events[i:i + BATCH_SIZE]
         batch_num = i // BATCH_SIZE + 1
-        total_batches = (len(unique_events) + BATCH_SIZE - 1) // BATCH_SIZE
+        total_batches = (len(new_events) + BATCH_SIZE - 1) // BATCH_SIZE
         
         logger.info(f"⏳ Processing batch {batch_num}/{total_batches} ({len(batch)} events)...")
-        tasks = [process_event(sem, ai_analyzer, image_gen, venue_enricher, dedup, db, ev) for ev in batch]
+        tasks = [process_event(sem, ai_analyzer, image_gen, venue_enricher, dedup, db, ev, label_cache) for ev in batch]
         await asyncio.gather(*tasks)
         
-        if i + BATCH_SIZE < len(unique_events):
+        if i + BATCH_SIZE < len(new_events):
             logger.info(f"💤 Sleeping {SLEEP_BETWEEN_BATCHES}s to prevent API rate limits...")
             await asyncio.sleep(SLEEP_BETWEEN_BATCHES)
+    
+    label_cache.save()
+    logger.info(f"💾 Label cache saved ({len(label_cache)} entries)")
     
     if venue_enricher:
         venue_enricher.close()

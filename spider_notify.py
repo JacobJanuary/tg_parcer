@@ -290,7 +290,7 @@ async def main():
         if args.resolve and unresolved_new:
             from telethon import TelegramClient
             api_id, api_hash, phone = config.validate()
-            tg_client = TelegramClient(config.SESSION_NAME, api_id, api_hash)
+            tg_client = TelegramClient("spider_notify_session", api_id, api_hash)
             await tg_client.start(phone=phone)
             print(f"\n📱 Telegram подключён")
 
@@ -480,15 +480,14 @@ async def main():
             return
 
         from telethon import TelegramClient
-        from spider_bot import format_card, make_buttons, _register_callbacks
+        from spider_bot import format_card, make_buttons
 
         bot_client = TelegramClient(
-            "spider_bot_session",
+            "spider_notify_bot",
             int(config.API_ID),
             config.API_HASH,
         )
         await bot_client.start(bot_token=config.BOT_TOKEN)
-        _register_callbacks(bot_client, db)
 
         me = await bot_client.get_me()
         print(f"\n🤖 Bot: @{me.username}")

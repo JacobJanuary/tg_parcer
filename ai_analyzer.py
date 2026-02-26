@@ -73,7 +73,14 @@ RULES:
    a) First, look for a venue name in the MESSAGE TEXT (direct address, branded name like "AUM", "Prana", "Cafe 13", "Soul Breakfast Phangan").
    b) If NOT found in text, check the CHAT NAME. If the chat name IS a venue or brand (e.g. "SATI YOGA", "Ошо медитация Koh Phangan", "NEWS_NASHEMESTO" → "Mesto"), use that as location_name.
    c) If neither text nor chat name yields a venue → location_name = null.
-4. Date: "today" = {today}, "tomorrow" = next day. Parse Russian: "сегодня"=today, "завтра"=tomorrow. If NO specific date or day is mentioned in the text, ASSUME IT IS HAPPENING TODAY ({today}). Only return null if the text explicitly states it's an ongoing broad announcement without a specific event day.
+   d) IMPORTANT: Return ONLY the exact venue name WITHOUT any area or district suffix. Example: "Orion Healing" (NOT "Orion Healing, Srithanu"), "AUM" (NOT "AUM Sound Healing Center, Maduea Wan"). The location area is handled separately by the geo-enrichment system.
+4. Date: "today" = {today}, "tomorrow" = next day.
+   - Parse ALL date formats: "17.02" = February 17 of current year, "15 февраля" = February 15, "20 числа" = 20th of current month, "в среду" / "Wednesday" = nearest upcoming Wednesday.
+   - Parse Russian words: "сегодня"=today, "завтра"=tomorrow, "послезавтра"=day after tomorrow.
+   - RECURRING EVENTS: If the text describes a recurring schedule ("каждый день", "every morning", "каждое утро", "по вторникам", "every Friday"), return the NEXT upcoming occurrence date from {today}. For daily events use {today}.
+   - If NO specific date, day of week, or recurrence pattern is mentioned, ASSUME IT IS HAPPENING TODAY ({today}).
+   - Return null ONLY if the message is clearly NOT an event announcement (e.g. a review of past event, discussion, question). An actual event MUST always have a date.
+   - YEAR VALIDATION: When the text does not specify a year, use the year from {today}. If the resulting date is MORE than 14 days in the past, treat it as a past event and return is_event=false. If the resulting date is MORE than 60 days in the future, double-check the year.
 5. Title: Bilingual JSON object with keys "en" and "ru". Short catchy title, max 30 chars. Translate if needed.
 6. Summary: Bilingual JSON object with keys "en" and "ru". One sentence, max 80 chars. Translate if needed.
 7. Description: Bilingual JSON object with keys "en" and "ru". Attractive event announcement, 2-4 sentences, max 500 chars. Translate if needed.

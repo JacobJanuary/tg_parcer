@@ -307,6 +307,7 @@ class Database:
         chat_type: str | None = None,
         source_type: str = "forward",
         found_in_chat_id: int | None = None,
+        participants_count: int | None = None,
         status: str = "new",
         resolved: bool = False,
         increment_seen: bool = True,
