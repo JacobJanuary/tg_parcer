@@ -73,6 +73,9 @@ _VENUE_ALIASES = {
     "7eleven haad rin": "7eleven",
     "711": "7eleven",
     "711 meeting point": "7eleven",
+    "seaside": "seaside sunset bar",
+    "seaside koh phangan": "seaside sunset bar",
+    "seaside phangan": "seaside sunset bar",
 }
 
 
@@ -283,9 +286,14 @@ class Database:
 
     async def get_active_chats(self) -> list[dict]:
         """Вернуть список активных чатов."""
-        rows = await self.pool.fetch(
-            "SELECT id, title, type FROM chats WHERE is_active = true ORDER BY title"
-        )
+        rows = await self.pool.fetch("""
+            SELECT c.id, c.title, c.type, MAX(d.username) as username
+            FROM chats c
+            LEFT JOIN discovered_chats d ON c.id = d.chat_id AND d.username IS NOT NULL AND d.username != ''
+            WHERE c.is_active = true 
+            GROUP BY c.id, c.title, c.type
+            ORDER BY c.title
+        """)
         return [dict(r) for r in rows]
 
     async def get_all_chat_ids(self) -> set[int]:
@@ -347,7 +355,7 @@ class Database:
                         resolved = CASE WHEN $4 THEN true ELSE resolved END,
                         chat_id = COALESCE($5, chat_id),
                         type = COALESCE($6, type),
-                        status = CASE WHEN $7 != 'new' THEN $7 ELSE status END
+                        status = CASE WHEN $7::text != 'new' THEN $7::text ELSE status END
                     WHERE id = $1
                 """, existing["id"], title, participants_count, resolved,
                      chat_id, chat_type, status)
@@ -359,22 +367,36 @@ class Database:
                         resolved = CASE WHEN $4 THEN true ELSE resolved END,
                         chat_id = COALESCE($5, chat_id),
                         type = COALESCE($6, type),
-                        status = CASE WHEN $7 != 'new' THEN $7 ELSE status END
+                        status = CASE WHEN $7::text != 'new' THEN $7::text ELSE status END
                     WHERE id = $1
                 """, existing["id"], title, participants_count, resolved,
                      chat_id, chat_type, status)
             return existing["id"]
 
         # Вставляем новый
-        row = await self.pool.fetchrow("""
-            INSERT INTO discovered_chats
-                (chat_id, username, invite_link, title, type, source_type,
+        try:
+            row = await self.pool.fetchrow("""
+                INSERT INTO discovered_chats
+                    (chat_id, username, invite_link, title, type, source_type,
+                     found_in_chat_id, participants_count, status, resolved)
+                VALUES ($1, $2, $3, $4, $5, $6, $7::bigint, $8, $9, $10)
+                ON CONFLICT DO NOTHING
+                RETURNING id
+            """, chat_id, username, invite_link, title, chat_type, source_type,
                  found_in_chat_id, participants_count, status, resolved)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            RETURNING id
-        """, chat_id, username, invite_link, title, chat_type, source_type,
-             found_in_chat_id, participants_count, status, resolved)
-        return row["id"]
+        except asyncpg.exceptions.ForeignKeyViolationError:
+            # Если чат, в котором нашли ссылку (found_in_chat_id), не числится в таблице chats
+            row = await self.pool.fetchrow("""
+                INSERT INTO discovered_chats
+                    (chat_id, username, invite_link, title, type, source_type,
+                     found_in_chat_id, participants_count, status, resolved)
+                VALUES ($1, $2, $3, $4, $5, $6, NULL, $8, $9, $10)
+                ON CONFLICT DO NOTHING
+                RETURNING id
+            """, chat_id, username, invite_link, title, chat_type, source_type,
+                 found_in_chat_id, participants_count, status, resolved)
+        
+        return row["id"] if row else None
 
     async def is_text_exists(self, text: str) -> bool:
         """Быстрая проверка по хэшу текста (защита от повторного ИИ-анализа)."""
@@ -557,6 +579,24 @@ class Database:
                     if row:
                         venue_id = row["id"]
 
+        # Normalize location_name to canonical venue name + island check
+        if venue_id:
+            venue_row = await self.pool.fetchrow(
+                "SELECT name, lat, lng FROM venues WHERE id = $1", venue_id
+            )
+            if venue_row:
+                # Use canonical venue name (prevents "AUM" vs "AUM Sound Healing Center")
+                location_name = venue_row["name"]
+                # Island filter: reject events for venues outside Phangan
+                from venue_enricher import is_on_phangan
+                v_lat, v_lng = venue_row["lat"], venue_row["lng"]
+                if v_lat and v_lng and not is_on_phangan(float(v_lat), float(v_lng)):
+                    logger.warning(
+                        f"🚫 Event rejected: venue '{venue_row['name']}' "
+                        f"({v_lat}, {v_lng}) is NOT on Phangan"
+                    )
+                    return None, False, False
+
         # Parse date
         event_date = None
         date_str = event.get("date")
@@ -594,12 +634,52 @@ class Database:
                 event.get("category"),
                 event_date,
                 event.get("time"),
-                event.get("location_name"),
+                location_name,
                 venue_id,
                 event.get("price_thb", 0),
                 json.dumps(event.get("summary") or {"en": "N/A", "ru": "N/A"}, ensure_ascii=False),
                 json.dumps(event.get("description") or {"en": "", "ru": ""}, ensure_ascii=False),
                 meta.get("chat_id"),
+                meta.get("chat_title"),
+                meta.get("message_id"),
+                meta.get("sender"),
+                meta.get("filter_score", 0),
+                meta.get("original_text"),
+                source,
+                fp,
+                datetime.fromisoformat(meta["detected_at"]) if meta.get("detected_at") else datetime.now(),
+            )
+            return row["id"], row["is_new"], bool(row["image_path"])
+        except asyncpg.exceptions.ForeignKeyViolationError:
+            # source_chat_id не числится в таблице chats — повторяем с NULL
+            logger.warning(f"FK violation for source_chat_id={meta.get('chat_id')}, retrying with NULL")
+            row = await self.pool.fetchrow("""
+                INSERT INTO events
+                    (title, category, event_date, event_time, location_name,
+                     venue_id, price_thb, summary, description,
+                     source_chat_id, source_chat_title, message_id, sender,
+                     filter_score, original_text, source, fingerprint, detected_at)
+                VALUES ($1::jsonb,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+                ON CONFLICT (fingerprint) DO UPDATE SET
+                    description = COALESCE(EXCLUDED.description, events.description),
+                    summary = COALESCE(EXCLUDED.summary, events.summary),
+                    venue_id = COALESCE(EXCLUDED.venue_id, events.venue_id),
+                    location_name = COALESCE(EXCLUDED.location_name, events.location_name),
+                    price_thb = EXCLUDED.price_thb,
+                    category = EXCLUDED.category,
+                    event_time = COALESCE(EXCLUDED.event_time, events.event_time)
+                RETURNING id, (xmax = 0) AS is_new, image_path
+            """,
+                json.dumps(event.get("title") or {"en": "N/A", "ru": "N/A"}, ensure_ascii=False),
+                event.get("category"),
+                event_date,
+                event.get("time"),
+                location_name,
+                venue_id,
+                event.get("price_thb", 0),
+                json.dumps(event.get("summary") or {"en": "N/A", "ru": "N/A"}, ensure_ascii=False),
+                json.dumps(event.get("description") or {"en": "", "ru": ""}, ensure_ascii=False),
+                None,  # source_chat_id = NULL
                 meta.get("chat_title"),
                 meta.get("message_id"),
                 meta.get("sender"),
@@ -626,7 +706,7 @@ class Database:
                 event.get("category"),
                 event_date,
                 event.get("time"),
-                event.get("location_name"),
+                location_name,
                 venue_id,
                 event.get("price_thb", 0),
                 json.dumps(event.get("summary"), ensure_ascii=False) if event.get("summary") else str(event.get("summary")),

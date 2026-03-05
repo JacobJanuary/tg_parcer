@@ -27,7 +27,7 @@ def save(chats: list, filepath: str = SELECTED_CHATS_FILE):
 async def load_from_db(db) -> list:
     """Загрузка активных чатов из PostgreSQL."""
     rows = await db.get_active_chats()
-    return [{"id": r["id"], "title": r["title"], "type": r.get("type", "")} for r in rows]
+    return [{"id": r["id"], "username": r.get("username"), "title": r["title"], "type": r.get("type", "")} for r in rows]
 
 
 async def save_to_db(db, chats: list):
@@ -41,10 +41,10 @@ async def save_to_db(db, chats: list):
         )
 
 
-async def resolve(client, chat_ids: list) -> list:
+async def resolve(client, chat_infos: list) -> list:
     """
     Резолвит ID/username'ы в Telegram entity.
-    Для числовых ID использует PeerChannel (каналы/супергруппы).
+    В `chat_infos` могут передаваться как голые ID (int/str), так и словари {"id": ..., "username": ...}.
 
     Returns:
         Список entity для успешно найденных чатов.
@@ -52,25 +52,41 @@ async def resolve(client, chat_ids: list) -> list:
     from telethon.tl.types import PeerChannel, PeerChat
 
     resolved = []
-    for chat_id in chat_ids:
+    for item in chat_infos:
+        if isinstance(item, dict):
+            chat_id = item["id"]
+            username = item.get("username")
+        else:
+            chat_id = item
+            username = None
+
         try:
-            # Строковые ID (@username) → напрямую
-            if isinstance(chat_id, str) and not chat_id.lstrip("-").isdigit():
-                entity = await client.get_entity(chat_id)
-            else:
-                # Числовой ID → пробуем как канал/супергруппу
-                numeric_id = int(chat_id)
+            entity = None
+            # Оптимизация: если есть username, надежнее искать по нему (особенно если локальный кэш пуст)
+            if username:
                 try:
-                    entity = await client.get_entity(PeerChannel(numeric_id))
+                    entity = await client.get_entity(username)
                 except Exception:
+                    pass
+
+            if not entity:
+                # Строковые ID (@username) → напрямую
+                if isinstance(chat_id, str) and not chat_id.lstrip("-").isdigit():
+                    entity = await client.get_entity(chat_id)
+                else:
+                    # Числовой ID → пробуем как канал/супергруппу
+                    numeric_id = int(chat_id)
                     try:
-                        entity = await client.get_entity(PeerChat(numeric_id))
+                        entity = await client.get_entity(PeerChannel(numeric_id))
                     except Exception:
-                        entity = await client.get_entity(numeric_id)
+                        try:
+                            entity = await client.get_entity(PeerChat(numeric_id))
+                        except Exception:
+                            entity = await client.get_entity(numeric_id)
 
             title = getattr(entity, "title", None) or getattr(entity, "first_name", str(chat_id))
             resolved.append(entity)
             print(f"   ✓ {title}")
         except Exception as e:
-            print(f"   ✗ Не удалось найти: {chat_id} ({e})")
+            print(f"   ✗ Не удалось найти: {chat_id} (username: {username}) ({e})")
     return resolved

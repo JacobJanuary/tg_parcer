@@ -155,7 +155,7 @@ async def main():
             spider_bot = None
 
     # 5. Резолв чатов
-    resolved_chats = await chats.resolve(client, chat_ids)
+    resolved_chats = await chats.resolve(client, selected)
     if not resolved_chats:
         print("❌ Ни один чат не найден.")
         await client.disconnect()
@@ -524,6 +524,19 @@ async def main():
         chat = await event.get_chat()
         chat_title = getattr(chat, "title", "Личный чат")
         text = event.text or ""
+        
+        # --- Forum Topics Support ---
+        # If the chat is a forum, group topic messages have a reply_to with forum_topic=True
+        if getattr(chat, "forum", False) and event.reply_to and event.reply_to.forum_topic:
+            try:
+                # Fetch the topic thread header message to get its title
+                topic_msg = await client.get_messages(chat, ids=event.reply_to.reply_to_top_id or event.reply_to.reply_to_msg_id)
+                if topic_msg and topic_msg.action and hasattr(topic_msg.action, "title"):
+                    topic_title = topic_msg.action.title
+                    # Prepend context for the AI
+                    text = f"[Topic: {topic_title}]\n\n" + text
+            except Exception as e:
+                logger.debug(f"Failed to fetch forum topic title for chat {chat_title}: {e}")
 
         # Spider: обнаружение (sync, мгновенное)
         if spider:

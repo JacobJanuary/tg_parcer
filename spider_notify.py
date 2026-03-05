@@ -366,7 +366,12 @@ async def main():
                     label = r.get("username") or r.get("invite_link") or str(r.get("chat_id"))
                     err_str = str(e).lower()
                     # Permanent failure → reject
-                    if any(x in err_str for x in ("no user has", "nobody is using", "username not occupied",
+                    if "unique constraint" in err_str and "chat_id" in err_str:
+                        # Эта инвайт-ссылка ведет на чат, который мы УЖЕ парсим. Удаляем дубликат-алиас.
+                        await db.pool.execute("DELETE FROM discovered_chats WHERE id = $1", r["id"])
+                        print(f"  [{i}/{len(unresolved_new)}] 🗑️ {label}: duplicate chat_id → removed")
+                        resolved_count += 1
+                    elif any(x in err_str for x in ("no user has", "nobody is using", "username not occupied",
                                                    "username invalid", "invite hash expired",
                                                    "the channel specified is private")):
                         await db.update_discovered(r["id"], status="rejected", resolved=True)
@@ -521,6 +526,8 @@ async def main():
                     buttons=buttons,
                     parse_mode="html",
                 )
+                # Mark as notified so we don't re-send on next cron run
+                await db.update_discovered(r["id"], status="notified")
                 print(f"  📤 {dc.title or dc.username}")
                 sent += 1
                 await asyncio.sleep(0.5)

@@ -16,3 +16,5 @@ test_results*.txt
 *.jsonl
 .DS_Store
 media/
+*.deb
+*.log

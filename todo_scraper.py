@@ -158,35 +158,40 @@ async def scrape_todo_today():
         return
 
     # Parse HTML
-    logger.info("Parsing DOM for event cards...")
+    logger.info("Parsing DOM for event JSON arrays...")
     soup = BeautifulSoup(html_data, "html.parser")
     
-    event_boxes = soup.select(".event-box")
-    logger.info(f"Found {len(event_boxes)} event cards.")
+    sections = soup.select('.tt-section')
+    logger.info(f"Found {len(sections)} sections with JSON data.")
     
-    parsed_events = []
-    for box in event_boxes:
-        link_tag = box.find("a", class_="event_image")
-        if not link_tag:
+    import json
+    events_map = {}
+    for section in sections:
+        data_json = section.get('data-all-events')
+        if not data_json:
             continue
             
-        href = link_tag.get("href", "")
-        aria_label = link_tag.get("aria-label", "")
-        
-        # Extract the image URL from the img tag
-        img_tag = box.find("img")
-        image_url = img_tag.get("src") if img_tag else None
-        
-        if aria_label:
-            parsed_events.append({
-                "source_url": href,
-                "raw_text": aria_label,
-                "image_url": image_url
-            })
+        try:
+            events = json.loads(data_json)
+            for ev in events:
+                if ev.get('link'):
+                    events_map[ev['link']] = ev
+        except Exception as e:
+            logger.error(f"JSON Parse error: {e}")
             
-    # Deduplicate by URL
-    unique_events = list({e["source_url"]: e for e in parsed_events}.values())
-    logger.info(f"Successfully extracted {len(unique_events)} unique events via aria-label.")
+    parsed_events = []
+    for link, ev in events_map.items():
+        # Build a highly descriptive raw_text for the AI pipeline
+        raw_text = f"Title: {ev.get('name', '')}\\nDate: {ev.get('display_date', '')}\\nTime: {ev.get('start_time', '')} to {ev.get('end_time', '')}\\nPrice: {ev.get('price_label', '')}\\nLocation: {ev.get('venue', '')}"
+        
+        parsed_events.append({
+            "source_url": link,
+            "raw_text": raw_text.strip(),
+            "image_url": ev.get('image')
+        })
+
+    unique_events = parsed_events
+    logger.info(f"Successfully extracted {len(unique_events)} unique events via embedded JSON.")
 
     # Pre-filter: skip events already in local aria-label cache
     label_cache = LabelCache()

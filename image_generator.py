@@ -81,7 +81,14 @@ Return ONLY the English visual prompt, nothing else. Keep it under 60 words.
                 model='gemini-2.5-flash',
                 contents=contents_list,
             )
-            image_prompt = response.text.strip()
+            raw_text = getattr(response, 'text', None)
+            if not raw_text:
+                logger.warning(f"⚠️ Арт-Директор вернул пустой ответ (response.text is None)")
+                return None
+            image_prompt = raw_text.strip()
+            if not image_prompt:
+                logger.warning(f"⚠️ Арт-Директор вернул пустую строку после strip()")
+                return None
             logger.info(f"🎬 2. Промпт готов ({len(image_prompt)} симв.)")
             return image_prompt
         except Exception as e:
@@ -153,10 +160,30 @@ Return ONLY the English visual prompt, nothing else. Keep it under 60 words.
     async def generate_cover(self, raw_tg_text: str, category: str, event_id: int = None, reference_image_path: str = None) -> str | None:
         """Асинхронная обертка с семафором и каскадным Failover (Rate Limit Protector)."""
         
-        # 1. Получаем промпт ОДИН раз (вне цикла ретраев)
-        image_prompt = await asyncio.to_thread(self._sync_get_prompt, raw_tg_text, category, override_prompt=None, reference_image_path=reference_image_path)
+        # 1. Получаем промпт с ретраями (до 3 попыток)
+        image_prompt = None
+        for prompt_attempt in range(3):
+            image_prompt = await asyncio.to_thread(
+                self._sync_get_prompt, raw_tg_text, category,
+                override_prompt=None, reference_image_path=reference_image_path
+            )
+            if image_prompt:
+                break
+            wait = 3 * (prompt_attempt + 1)
+            logger.warning(f"⏳ Арт-Директор: попытка {prompt_attempt + 1}/3 не удалась. Ретрай через {wait}с...")
+            await asyncio.sleep(wait)
+        
         if not image_prompt:
-            return None
+            # Fallback: генерируем простой промпт из категории, чтобы обложка всё равно была
+            fallback_prompts = {
+                "Party": "Cinematic tropical night party under palm trees, colorful neon lights, dancers silhouettes, Koh Phangan beach, 8k resolution, highly detailed, premium photography",
+                "Sport": "Dynamic athletic activity on a tropical beach at golden hour, energetic movement, coconut palms, Koh Phangan island aesthetic, 8k cinematic, premium photography",
+                "Chill": "Serene tropical sunset meditation scene, soft golden light through palm trees, peaceful ocean, Koh Phangan vibes, 8k resolution, highly detailed, premium photography",
+                "Education": "Intimate workshop gathering in a beautiful open-air tropical pavilion, warm ambient light, lush greenery, Koh Phangan aesthetic, 8k cinematic, premium photography",
+                "Music": "Live music performance at a stunning tropical open-air venue, magical lighting, ocean backdrop, Koh Phangan nightlife, 8k resolution, highly detailed, premium photography",
+            }
+            image_prompt = fallback_prompts.get(category, fallback_prompts["Chill"])
+            logger.warning(f"🔄 Арт-Директор не справился за 3 попытки. Используем fallback промпт для [{category}].")
             
         fallback_models = [
             "imagen-4.0-generate-001",

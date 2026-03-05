@@ -38,6 +38,18 @@ logger = logging.getLogger(__name__)
 # Путь к кэшу площадок
 VENUES_PATH = os.path.join(os.path.dirname(__file__), "data", "venues.json")
 
+# Bounding box Koh Phangan (включает Haad Rin, Baan Tai, все побережье)
+PHANGAN_BOUNDS = {
+    "lat_min": 9.46, "lat_max": 9.84,
+    "lng_min": 99.85, "lng_max": 100.12,
+}
+
+
+def is_on_phangan(lat: float, lng: float) -> bool:
+    """Проверяет, находятся ли координаты на острове Ко Панган."""
+    return (PHANGAN_BOUNDS["lat_min"] <= lat <= PHANGAN_BOUNDS["lat_max"]
+            and PHANGAN_BOUNDS["lng_min"] <= lng <= PHANGAN_BOUNDS["lng_max"])
+
 # ─── Промпт для поиска площадки ───
 
 # ─── Pydantic Схема для Структурированного Вывода ───
@@ -128,6 +140,11 @@ VENUE_ALIASES = {
     "7eleven haad rin": "7eleven",
     "711": "7eleven",
     "711 meeting point": "7eleven",
+    "hexagon garden temple": "hexagon",
+    "hexagon": "hexagon",
+    "hexagon srithanu": "hexagon",
+    "paradise yoga": "paradise yoga",
+    "paradise yoga hin kong": "paradise yoga",
 }
 
 _CLEAN_RE = re.compile(r"[^a-zA-Zа-яА-ЯёЁ0-9 ]")
@@ -497,6 +514,17 @@ class VenueEnricher:
                     lat = result.get("lat")
                     lng = result.get("lng")
                     if lat and lng and isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
+                        # Island filter: reject venues outside Phangan
+                        if not is_on_phangan(float(lat), float(lng)):
+                            addr = result.get('address', '')
+                            logger.warning(
+                                f"🚫 Venue '{venue_name}' is NOT on Phangan "
+                                f"({float(lat):.4f}, {float(lng):.4f}, addr: {addr}) → rejected"
+                            )
+                            await self.cache.aput(venue_name, {"found": False})
+                            self.stats["not_found"] += 1
+                            return None
+
                         venue_data = {
                             "found": True,
                             "name": result.get("name", venue_name),
