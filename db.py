@@ -390,11 +390,11 @@ class Database:
                 INSERT INTO discovered_chats
                     (chat_id, username, invite_link, title, type, source_type,
                      found_in_chat_id, participants_count, status, resolved)
-                VALUES ($1, $2, $3, $4, $5, $6, NULL, $8::integer, $9::text, $10)
+                VALUES ($1, $2, $3, $4, $5, $6, NULL, $7::integer, $8::text, $9)
                 ON CONFLICT DO NOTHING
                 RETURNING id
             """, chat_id, username, invite_link, title, chat_type, source_type,
-                 found_in_chat_id, participants_count, status, resolved)
+                 participants_count, status, resolved)
         
         return row["id"] if row else None
 
