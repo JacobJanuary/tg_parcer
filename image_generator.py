@@ -43,7 +43,7 @@ class EventImageGenerator:
         os.makedirs(self.media_dir, exist_ok=True)
         self.concurrency_limit = asyncio.Semaphore(2)
 
-    def _sync_get_prompt(self, raw_tg_text: str, category: str, override_prompt: str = None, reference_image_path: str = None) -> str | None:
+    def _sync_get_prompt(self, raw_tg_text: str, category: str, override_prompt: str = None, reference_image_path: str = None, model_name: str = "gemini-2.5-flash") -> str | None:
         """ШАГ 1: AI-Арт-Директор пишет промпт (Prompt-Inception)"""
         if override_prompt:
             logger.info("🎬 Используем переданный вручную промпт для художника.")
@@ -76,9 +76,9 @@ Return ONLY the English visual prompt, nothing else. Keep it under 60 words.
                 logger.warning(f"Failed to load reference image {reference_image_path}: {e}")
 
         try:
-            logger.debug(f"🕵️‍♂️ 1. Арт-Директор анализирует текст [{category}]...")
+            logger.debug(f"🕵️‍♂️ 1. Арт-Директор ({model_name}) анализирует текст [{category}]...")
             response = self.client.models.generate_content(
-                model='gemini-2.5-flash',
+                model=model_name,
                 contents=contents_list,
             )
             raw_text = getattr(response, 'text', None)
@@ -160,17 +160,20 @@ Return ONLY the English visual prompt, nothing else. Keep it under 60 words.
     async def generate_cover(self, raw_tg_text: str, category: str, event_id: int = None, reference_image_path: str = None) -> str | None:
         """Асинхронная обертка с семафором и каскадным Failover (Rate Limit Protector)."""
         
-        # 1. Получаем промпт с ретраями (до 3 попыток)
+        # 1. Получаем промпт с ретраями (плавная деградация)
         image_prompt = None
-        for prompt_attempt in range(3):
+        prompt_fallback_models = ["gemini-2.5-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
+        
+        for prompt_attempt, model_name in enumerate(prompt_fallback_models):
             image_prompt = await asyncio.to_thread(
                 self._sync_get_prompt, raw_tg_text, category,
-                override_prompt=None, reference_image_path=reference_image_path
+                override_prompt=None, reference_image_path=reference_image_path, model_name=model_name
             )
             if image_prompt:
                 break
             wait = 3 * (prompt_attempt + 1)
-            logger.warning(f"⏳ Арт-Директор: попытка {prompt_attempt + 1}/3 не удалась. Ретрай через {wait}с...")
+            next_model = prompt_fallback_models[prompt_attempt + 1] if prompt_attempt < len(prompt_fallback_models) - 1 else "None"
+            logger.warning(f"⏳ Арт-Директор ({model_name}): попытка {prompt_attempt + 1}/{len(prompt_fallback_models)} не удалась. Ретрай через {wait}с (след: {next_model})...")
             await asyncio.sleep(wait)
         
         if not image_prompt:
