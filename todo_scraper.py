@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 import httpx
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 async def download_image(url: str, dest_dir: str = "media") -> str | None:
     if not url:
@@ -36,6 +37,54 @@ async def download_image(url: str, dest_dir: str = "media") -> str | None:
         logger.warning(f"Failed to download image {url}: {e}")
         return None
 
+# ─── Day-of-week validation ───
+_DAY_NAMES_EN = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+                 "friday": 4, "saturday": 5, "sunday": 6}
+_DAY_NAMES_RU = {"понедельник": 0, "вторник": 1, "среда": 2, "четверг": 3,
+                 "пятница": 4, "суббота": 5, "воскресенье": 6}
+
+def _fix_weekday_mismatch(result: dict) -> bool:
+    """If title contains a weekday name, validate event_date matches. Fix if not."""
+    title_en = (result.get("title") or {}).get("en", "").lower()
+    title_ru = (result.get("title") or {}).get("ru", "").lower()
+    date_str = result.get("date", "")
+    if not date_str or date_str == "TBD":
+        return False
+
+    try:
+        event_date = datetime.strptime(str(date_str)[:10], "%Y-%m-%d")
+    except ValueError:
+        return False
+
+    # Check EN and RU day names
+    expected_weekday = None
+    matched_day = None
+    for day_name, wday in {**_DAY_NAMES_EN, **_DAY_NAMES_RU}.items():
+        if day_name in title_en or day_name in title_ru:
+            expected_weekday = wday
+            matched_day = day_name
+            break
+
+    if expected_weekday is None:
+        return False
+
+    if event_date.weekday() == expected_weekday:
+        return False  # All good
+
+    # Shift to next correct weekday
+    days_ahead = expected_weekday - event_date.weekday()
+    if days_ahead <= 0:
+        days_ahead += 7
+    correct_date = event_date + timedelta(days=days_ahead)
+    old_date = result["date"]
+    result["date"] = correct_date.strftime("%Y-%m-%d")
+    logger.warning(
+        f"📅 Day-of-week fix: '{matched_day}' in title but date was "
+        f"{old_date} ({event_date.strftime('%A')}). Fixed to {result['date']} ({correct_date.strftime('%A')})"
+    )
+    return True
+
+
 async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, image_gen: EventImageGenerator, venue_enricher: VenueEnricher, dedup: EventDedup, db: Database, ev: dict, label_cache: LabelCache):
     async with sem:
         raw_text = ev['raw_text']
@@ -49,6 +98,9 @@ async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, imag
             # NOTE: do NOT add to label_cache here! If AI was wrong,
             # the event would be lost forever. Let it retry next hour.
             return
+
+        # Fix 2: Day-of-week validation (e.g. "Bachata Monday" on a Sunday)
+        _fix_weekday_mismatch(result)
             
         if await dedup.is_duplicate(result):
             logger.info(f"🚫 Duplicate skipped: {result.get('title', {})}")
@@ -273,15 +325,23 @@ async def scrape_todo_today():
             
     parsed_events = []
     for link, ev in events_map.items():
-        # Build a highly descriptive raw_text for the AI pipeline
-        raw_text = f"Title: {ev.get('name', '')}\\nDate: {ev.get('display_date', '')}\\nTime: {ev.get('start_time', '')} to {ev.get('end_time', '')}\\nPrice: {ev.get('price_label', '')}\\nLocation: {ev.get('venue', '')}"
+        # Fix 1: Extract reliable date from URL instead of display_date
+        # URL format: https://todo.today/koh-phangan/2026/03/09/event-slug
+        url_date_match = re.search(r'/(\d{4})/(\d{2})/(\d{2})/', link)
+        if url_date_match:
+            url_date = f"{url_date_match.group(1)}-{url_date_match.group(2)}-{url_date_match.group(3)}"
+        else:
+            url_date = ev.get('display_date', '')  # fallback
+
+        # Build raw_text with reliable date from URL
+        raw_text = f"Title: {ev.get('name', '')}\\nDate: {url_date}\\nTime: {ev.get('start_time', '')} to {ev.get('end_time', '')}\\nPrice: {ev.get('price_label', '')}\\nLocation: {ev.get('venue', '')}"
         
         parsed_events.append({
             "source_url": link,
             "raw_text": raw_text.strip(),
             "image_url": ev.get('image'),
             "raw_title": ev.get('name', '').strip(),
-            "raw_date": ev.get('display_date', '').strip()
+            "raw_date": url_date
         })
 
     unique_events = parsed_events
