@@ -6,6 +6,51 @@ logger = logging.getLogger(__name__)
 
 _TOKEN_RE = re.compile(r"[a-zA-Zа-яА-ЯёЁ0-9]+")
 
+# ─── Geographic filter: reject events outside Koh Phangan ───
+
+_OFF_ISLAND_KEYWORDS = {
+    # Thai islands & cities (EN)
+    "phuket", "samui", "bangkok", "pattaya", "chiang mai", "chiang rai",
+    "krabi", "hua hin", "koh tao", "koh samui", "koh lanta", "koh lipe",
+    "koh chang", "ko samui", "ko tao", "ko lanta", "ko chang",
+    # RU
+    "пхукет", "самуи", "бангкок", "паттайя", "чианг май", "чианг рай",
+    "краби", "хуа хин",
+    # Other countries
+    "bali", "бали", "goa", "гоа",
+}
+
+# Whitelist: these CONTAIN off-island words but ARE on Phangan
+_PHANGAN_WHITELIST = {"koh phangan", "ko phangan", "ко панган", "панган"}
+
+
+def is_off_island(event: dict, original_text: str = "") -> bool:
+    """
+    Returns True if the event location is NOT on Koh Phangan.
+    Checks venue name and original text for off-island keywords.
+    """
+    loc = str(event.get("location_name", "")).lower()
+    text = original_text.lower() if original_text else ""
+
+    # Check if venue name contains any off-island keyword
+    for kw in _OFF_ISLAND_KEYWORDS:
+        if kw in loc:
+            # Make sure it's not a Phangan venue with "samui" in name etc.
+            if any(wl in loc for wl in _PHANGAN_WHITELIST):
+                continue
+            logger.info(f"🌍 Geo-filter: off-island venue «{loc}» (keyword: {kw})")
+            return True
+
+    # If venue looks clean, also scan the original text for explicit off-island locations
+    # Only flag if venue is NOT clearly Phangan
+    if loc and not any(wl in loc for wl in _PHANGAN_WHITELIST):
+        for kw in _OFF_ISLAND_KEYWORDS:
+            if kw in text and f"📍" in original_text and kw in original_text.lower().split("📍")[-1][:200]:
+                logger.info(f"🌍 Geo-filter: off-island text detected (keyword: {kw})")
+                return True
+
+    return False
+
 class EventDedup:
     """
     4-tier deduplication:

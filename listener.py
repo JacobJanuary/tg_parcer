@@ -442,6 +442,12 @@ async def main():
                     dup_count += 1
                     return
 
+                # Geo-filter: reject events outside Koh Phangan
+                from event_dedup import is_off_island
+                if is_off_island(ai_result, text):
+                    logger.info(f"🌍 Off-island event skipped: {ai_result.get('title', {})}")
+                    return
+
                 # Venue Enrichment (может быть медленным, но мы в background)
                 if venue_enricher:
                     try:

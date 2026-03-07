@@ -55,6 +55,12 @@ async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, imag
             # NOTE: do NOT cache — dedup relies on DB state which changes.
             # If the original was deleted, this event would never re-appear.
             return
+
+        # Geo-filter: reject events outside Koh Phangan
+        from event_dedup import is_off_island
+        if is_off_island(result, raw_text):
+            logger.info(f"🌍 Off-island event skipped: {result.get('title', {})}")
+            return
             
         # Enrich Venue (creates new if doesn't exist)
         if venue_enricher:
