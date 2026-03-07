@@ -438,7 +438,7 @@ async def main():
             ai_result = await analyzer.analyze(text, chat_title)
             if ai_result and ai_result.get("is_event"):
                 # Дедупликация (быстрая, не блокирует)
-                if dedup.is_duplicate(ai_result):
+                if await dedup.is_duplicate(ai_result):
                     dup_count += 1
                     return
 

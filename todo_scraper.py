@@ -45,13 +45,15 @@ async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, imag
         
         result = await ai_analyzer.extract(raw_text, chat_title="todo.today")
         if not result or not result.get("is_event"):
-            logger.warning(f"AI rejected event: {raw_text}")
-            label_cache.add(raw_text)
+            logger.warning(f"AI rejected event: {raw_text[:60]}")
+            # NOTE: do NOT add to label_cache here! If AI was wrong,
+            # the event would be lost forever. Let it retry next hour.
             return
             
-        if dedup.is_duplicate(result):
+        if await dedup.is_duplicate(result):
             logger.info(f"🚫 Duplicate skipped: {result.get('title', {})}")
-            label_cache.add(raw_text)
+            # NOTE: do NOT cache — dedup relies on DB state which changes.
+            # If the original was deleted, this event would never re-appear.
             return
             
         # Enrich Venue (creates new if doesn't exist)
@@ -76,6 +78,9 @@ async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, imag
         # Insert to DB
         try:
             event_id, is_new, has_image = await db.insert_event(result, source="todotoday")
+            if not event_id:
+                logger.warning(f"⛔ Event rejected by DB (island filter?): {result.get('title', {})}")
+                return
             label_cache.add(raw_text)
             if is_new:
                 logger.info(f"✅ inserted NEW event: {result.get('title', {}).get('ru', 'Unknown')} (ID: {event_id})")
@@ -107,6 +112,98 @@ async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, imag
         except Exception as e:
             logger.error(f"DB insert failed: {e}")
 
+async def smart_bump_events(db, cached_events):
+    """
+    Finds duplicated events that were scraped on a previous day and bumps their 
+    event_date to align with dynamic 'Today' / 'Tomorrow' labels in their raw UI text,
+    bypassing the need to regenerate prompts and images.
+    """
+    from datetime import datetime, timedelta
+    import re
+    import json
+    
+    today = datetime.now().date()
+    bumped_count: int = 0
+    
+    for ev in cached_events:
+        raw_text = ev.get("raw_text", "")
+        raw_title = ev.get("raw_title", "")
+        raw_date = ev.get("raw_date", "")
+        
+        if not raw_title or not raw_date:
+            continue
+            
+        if raw_date.lower() == "today":
+            target_date = today
+        elif raw_date.lower() == "tomorrow":
+            target_date = today + timedelta(days=1)
+        else:
+            continue
+            
+        try:
+            # Extract venue from raw_text for cross-validation
+            # raw_text format: "Title: X\nDate: Y\nTime: Z\nPrice: W\nLocation: V"
+            raw_venue = ""
+            venue_match = re.search(r'Location:\s*(.+?)(?:\\\\n|$)', raw_text)
+            if venue_match:
+                raw_venue = venue_match.group(1).strip().rstrip(',').strip()
+            
+            # Strategy: Match by EXACT title + venue (both required)
+            # Title includes teacher name, e.g. "Vinyasa Yoga w/ Fah" ≠ "Vinyasa Yoga w/ Tony"
+            row = None
+            if not raw_venue:
+                logger.warning(f"No venue in raw_text, skipping: '{raw_title[:40]}'")
+                continue
+            
+            # Match title AND venue in original_text
+            row = await db.pool.fetchrow("""
+                SELECT id, title, event_date
+                FROM events
+                WHERE source ILIKE '%todo%'
+                  AND original_text LIKE $1
+                  AND original_text LIKE $2
+                ORDER BY detected_at DESC
+                LIMIT 1
+            """, f"Title: {raw_title}%", f"%Location: {raw_venue}%")
+            
+            if not row:
+                logger.warning(f"DB Row not found for '{raw_title[:40]}' @ '{raw_venue[:20]}'")
+                continue
+                
+            old_id = row['id']
+            old_date = row['event_date']
+            
+            if old_date and old_date < target_date:
+                title_data = row['title']
+                if isinstance(title_data, str):
+                    try:
+                        title_data = json.loads(title_data)
+                    except:
+                        pass
+                        
+                new_fp = db._fingerprint(title_data, target_date.isoformat())
+                
+                exists = await db.pool.fetchval("SELECT id FROM events WHERE fingerprint = $1", new_fp)
+                if not exists:
+                    await db.pool.execute(
+                        "UPDATE events SET event_date = $1, fingerprint = $2, detected_at = now() WHERE id = $3", 
+                        target_date, new_fp, old_id
+                    )
+                    bumped_count += 1
+                    t_str = str(raw_title)
+                    logger.info(f"🔄 Bumped event {old_id} ('{t_str[:20]}...') from {old_date} to {target_date}")
+                else:
+                    logger.warning(f"Target DB entry already exists for FP {new_fp}")
+            else:
+                 logger.warning(f"Old date ({old_date}) not less than target_date ({target_date}) for event {old_id}")
+                    
+        except Exception as e:
+            t_str = str(raw_title)
+            logger.error(f"Error checking smart bump for '{t_str[:20]}': {e}")
+            
+    if bumped_count > 0:
+        logger.info(f"🚀 Smart Bump complete: {bumped_count} recurring events moved forward.")
+
 async def scrape_todo_today():
     db = Database()
     await db.connect()
@@ -116,68 +213,57 @@ async def scrape_todo_today():
     venue_enricher = VenueEnricher(db)
     await venue_enricher.cache.load_from_pg()
     logger.info(f"📍 Venue Enricher activated ({len(venue_enricher.cache)} in cache).")
+    all_raw_events = []
+
+    async def fetch_events(url: str, label: str) -> list:
+        logger.info(f"Loading todo.today ({label}) in an isolated context...")
+        events_batch = []
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            )
+            page = await context.new_page()
+            
+            async def handle_response(response):
+                if "todo-today/v1/events" in response.url:
+                    try:
+                        data = await response.json()
+                        sections = data.get("sections", [])
+                        for s in sections:
+                            for ev in s.get("events", []):
+                                events_batch.append(ev)
+                    except Exception as e:
+                        logger.error(f"Intercept error on {label}: {e}")
+
+            page.on("response", handle_response)
+            
+            await page.goto(url, wait_until="domcontentloaded")
+            await page.wait_for_timeout(8000)
+            
+            await browser.close()
+            return events_batch
+
+    # Fetch sequentially in isolated browsers to bypass CF and SPA cache
+    today_events = await fetch_events("https://todo.today/koh-phangan/", "Today")
+    if today_events:
+        all_raw_events.extend(today_events)
     
-    html_data = None
+    tomorrow_events = await fetch_events("https://todo.today/koh-phangan/tomorrow/", "Tomorrow")
+    if tomorrow_events:
+        all_raw_events.extend(tomorrow_events)
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        # Using a proper Mac user agent to look human
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-        )
-        page = await context.new_page()
-        
-        logger.info("Loading todo.today...")
-        await page.goto("https://todo.today/koh-phangan/", wait_until="domcontentloaded")
-        
-        # Wait to let Cloudflare JS challenge pass
-        logger.info("Waiting for Cloudflare bypass...")
-        await page.wait_for_timeout(8000)
-        
-        # 1. Grab Today's events from the initial DOM
-        logger.info("Capturing 'Today's' events from initial DOM...")
-        today_html = await page.content()
-        
-        # 2. Grab Tomorrow's events by directly visiting the URL
-        logger.info("Visiting /tomorrow/ to capture next day's events...")
-        await page.goto("https://todo.today/koh-phangan/tomorrow/", wait_until="domcontentloaded")
-        logger.info("Waiting for Cloudflare bypass on tomorrow page...")
-        await page.wait_for_timeout(8000)
-        
-        tomorrow_html = await page.content()
-        logger.info("Successfully fetched 'Tomorrow' HTML payload!")
-
-        logger.info("Closing browser.")
-        await browser.close()
-        
-        html_data = today_html + tomorrow_html
-
-    if not html_data:
-        logger.error("No HTML data to parse.")
+    if not all_raw_events:
+        logger.error("No API JSON data intercepted.")
         await db.close()
         return
 
-    # Parse HTML
-    logger.info("Parsing DOM for event JSON arrays...")
-    soup = BeautifulSoup(html_data, "html.parser")
-    
-    sections = soup.select('.tt-section')
-    logger.info(f"Found {len(sections)} sections with JSON data.")
-    
-    import json
+    # Parse and deduplicate intercepted events
+    logger.info("Parsing intercepted API events...")
     events_map = {}
-    for section in sections:
-        data_json = section.get('data-all-events')
-        if not data_json:
-            continue
-            
-        try:
-            events = json.loads(data_json)
-            for ev in events:
-                if ev.get('link'):
-                    events_map[ev['link']] = ev
-        except Exception as e:
-            logger.error(f"JSON Parse error: {e}")
+    for ev in all_raw_events:
+        if ev.get('link'):
+            events_map[ev['link']] = ev
             
     parsed_events = []
     for link, ev in events_map.items():
@@ -187,7 +273,9 @@ async def scrape_todo_today():
         parsed_events.append({
             "source_url": link,
             "raw_text": raw_text.strip(),
-            "image_url": ev.get('image')
+            "image_url": ev.get('image'),
+            "raw_title": ev.get('name', '').strip(),
+            "raw_date": ev.get('display_date', '').strip()
         })
 
     unique_events = parsed_events
@@ -196,10 +284,19 @@ async def scrape_todo_today():
     # Pre-filter: skip events already in local aria-label cache
     label_cache = LabelCache()
     label_cache.load()
-    new_events = [e for e in unique_events if not label_cache.contains(e["raw_text"])]
-    cached_count = len(unique_events) - len(new_events)
+
+    new_events = []
+    cached_events = []
+    for e in unique_events:
+        if label_cache.contains(e["raw_text"]):
+            cached_events.append(e)
+        else:
+            new_events.append(e)
+
+    cached_count = len(cached_events)
     if cached_count:
-        logger.info(f"⚡ Label cache: {cached_count} known, {len(new_events)} new → sending to AI")
+        logger.info(f"⚡ Label cache: {cached_count} known, {len(new_events)} new (sending to AI).")
+        await smart_bump_events(db, cached_events)
 
     # Deduplicator (cross-source DB check)
     dedup = EventDedup()
