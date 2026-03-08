@@ -38,10 +38,10 @@ logger = logging.getLogger(__name__)
 # Путь к кэшу площадок
 VENUES_PATH = os.path.join(os.path.dirname(__file__), "data", "venues.json")
 
-# Bounding box Koh Phangan (включает Haad Rin, Baan Tai, все побережье)
+# Bounding box Koh Phangan (actual island boundaries)
 PHANGAN_BOUNDS = {
-    "lat_min": 9.46, "lat_max": 9.84,
-    "lng_min": 99.85, "lng_max": 100.12,
+    "lat_min": 9.65, "lat_max": 9.82,
+    "lng_min": 99.93, "lng_max": 100.10,
 }
 
 
@@ -347,6 +347,13 @@ class VenueEnricher:
                     lat, lng = loc.get("lat"), loc.get("lng")
                     
                     if lat and lng:
+                        # Island filter: reject venues outside Phangan
+                        if not is_on_phangan(float(lat), float(lng)):
+                            logger.warning(
+                                f"🗺️ Google Maps API: '{venue_name}' NOT on Phangan "
+                                f"({lat}, {lng}) → rejected"
+                            )
+                            return None
                         place_id = best.get("place_id", "")
                         maps_url = f"https://www.google.com/maps/place/?q=place_id:{place_id}" if place_id else ""
                         logger.info(f"🗺️ Google Maps API Fallback SUCCESS: {venue_name} -> {best.get('name')}")
@@ -520,12 +527,10 @@ class VenueEnricher:
                         if not is_on_phangan(float(lat), float(lng)):
                             addr = result.get('address', '')
                             logger.warning(
-                                f"🚫 Venue '{venue_name}' is NOT on Phangan "
-                                f"({float(lat):.4f}, {float(lng):.4f}, addr: {addr}) → rejected"
+                                f"🚫 Venue '{search_name}' is NOT on Phangan "
+                                f"({float(lat):.4f}, {float(lng):.4f}, addr: {addr}) → trying next"
                             )
-                            await self.cache.aput(venue_name, {"found": False})
-                            self.stats["not_found"] += 1
-                            return None
+                            continue  # try next attempt with Koh Phangan hint
 
                         venue_data = {
                             "found": True,
