@@ -612,14 +612,16 @@ class Database:
             event.get("location_name"),
         )
 
+        sender_id = meta.get("sender_id")
+
         try:
             row = await self.pool.fetchrow("""
                 INSERT INTO events
                     (title, category, event_date, event_time, location_name,
                      venue_id, price_thb, summary, description,
                      source_chat_id, source_chat_title, message_id, sender,
-                     filter_score, original_text, source, fingerprint, detected_at)
-                VALUES ($1::jsonb,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+                     filter_score, original_text, source, fingerprint, detected_at, sender_id)
+                VALUES ($1::jsonb,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
                 ON CONFLICT (fingerprint) DO UPDATE SET
                     description = COALESCE(EXCLUDED.description, events.description),
                     summary = COALESCE(EXCLUDED.summary, events.summary),
@@ -648,6 +650,7 @@ class Database:
                 source,
                 fp,
                 datetime.fromisoformat(meta["detected_at"]) if meta.get("detected_at") else datetime.now(),
+                sender_id,
             )
             return row["id"], row["is_new"], bool(row["image_path"])
         except asyncpg.exceptions.ForeignKeyViolationError:
@@ -658,8 +661,8 @@ class Database:
                     (title, category, event_date, event_time, location_name,
                      venue_id, price_thb, summary, description,
                      source_chat_id, source_chat_title, message_id, sender,
-                     filter_score, original_text, source, fingerprint, detected_at)
-                VALUES ($1::jsonb,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+                     filter_score, original_text, source, fingerprint, detected_at, sender_id)
+                VALUES ($1::jsonb,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
                 ON CONFLICT (fingerprint) DO UPDATE SET
                     description = COALESCE(EXCLUDED.description, events.description),
                     summary = COALESCE(EXCLUDED.summary, events.summary),
@@ -688,6 +691,7 @@ class Database:
                 source,
                 fp,
                 datetime.fromisoformat(meta["detected_at"]) if meta.get("detected_at") else datetime.now(),
+                sender_id,
             )
             return row["id"], row["is_new"], bool(row["image_path"])
         except asyncpg.exceptions.UndefinedColumnError:

@@ -495,6 +495,7 @@ async def main():
                     "chat_title": chat_title,
                     "message_id": event_obj.id,
                     "sender": sender_name,
+                    "sender_id": event_obj.sender_id,
                     "filter_score": filter_score,
                     "detected_at": datetime.now().isoformat(),
                     "original_text": text,
