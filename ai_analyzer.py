@@ -159,7 +159,7 @@ class EventAnalyzer:
         await self.screen_limiter.acquire()
         self.stats["screened"] += 1
 
-        user_prompt = f"Chat: {chat_title}\n\nMessage:\n{text[:1000]}"
+        user_prompt = f"Chat: {chat_title}\n\nMessage:\n{text[:1500]}"
 
         try:
             response = await asyncio.to_thread(
@@ -248,7 +248,7 @@ class EventAnalyzer:
 
         today = date.today().isoformat()
         system_prompt = EXTRACT_PROMPT.replace("{today}", today)
-        user_prompt = f"Chat: {chat_title}\n\nMessage:\n{text[:2000]}"
+        user_prompt = f"Chat: {chat_title}\n\nMessage:\n{text[:3000]}"
 
         models_to_try = [self.model]
 
