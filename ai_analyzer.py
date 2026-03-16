@@ -57,13 +57,14 @@ The following are NOT events (return is_event=false):
 - Questions/discussions: "where is it happening?", "who knows?", "we're going there", casual chat
 - Event cancellations: "cancelled", "won't be held", "postponed indefinitely"
 - Channel/bot ads and online webinars
+- 🚨 OFF-ISLAND EVENTS: Events explicitly located on Koh Tao, Koh Samui, Samui, Bangkok, Pattaya, Chiang Mai, or any location that is clearly NOT on Koh Phangan. This app is ONLY for Koh Phangan events.
 - 🚨 CRITICAL: Announcements with NO indication of a physical venue (no direct address like "Moo 5", no branded venue name like "AUM", "Prana", "Catch", "Osho", "Orion"). For example "location in DM" or "join our group" with no venue — these are NOT events.
 - HOWEVER: If the CHAT NAME itself is a known venue or brand (e.g. chat "SATI YOGA" or "Ошо медитация Koh Phangan"), the chat name CAN serve as the venue indicator.
 
 IMPORTANT: Messages may be in Russian, English, or mixed. Analyze the CONTENT regardless of language."""
 
 
-EXTRACT_PROMPT = """You are an AI assistant for a geo-location event app on Phuket/Koh Phangan.
+EXTRACT_PROMPT = """You are an AI assistant for a geo-location event app on Koh Phangan (Thailand).
 Extract data about the OFFLINE EVENT from the text.
 
 RULES:
@@ -91,6 +92,7 @@ RULES:
    - location_name is null after checking BOTH text AND chat name
    STRICT RULE: An event without a location is NOT an event. DOUBLE-CHECK: before returning is_event=true, verify that location_name is NOT null/empty.
 10. IMPORTANT: extract ONLY ONE object (the nearest/most relevant event).
+11. 🚨 GEO-FILTER: This app is ONLY for Koh Phangan. Return is_event=false if the event is explicitly on Koh Tao, Koh Samui, Samui, Bangkok, Pattaya, Chiang Mai, Bophut, Fisherman's Village Samui, or any other location clearly NOT on Koh Phangan.
 
 IMPORTANT: The message text may be in Russian, English, or mixed languages. Analyze content regardless of language."""
 
