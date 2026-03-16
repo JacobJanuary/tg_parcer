@@ -75,8 +75,9 @@ RULES:
    b) If NOT found in text, check the CHAT NAME. If the chat name IS a venue or brand (e.g. "SATI YOGA", "Ошо медитация Koh Phangan", "NEWS_NASHEMESTO" → "Mesto"), use that as location_name.
    c) If neither text nor chat name yields a venue → location_name = null.
    d) IMPORTANT: Return ONLY the exact venue name WITHOUT any area or district suffix. Example: "Orion Healing" (NOT "Orion Healing, Srithanu"), "AUM" (NOT "AUM Sound Healing Center, Maduea Wan"). The location area is handled separately by the geo-enrichment system.
-4. Date: "today" = {today}, "tomorrow" = next day.
+4. Date: "today" = {today} ({weekday}), "tomorrow" = next day.
    - Parse ALL date formats: "17.02" = February 17 of current year, "15 февраля" = February 15, "20 числа" = 20th of current month, "в среду" / "Wednesday" = nearest upcoming Wednesday.
+   - WEEKDAY MATH: When parsing a day name like "Sunday", calculate the correct date from {today} ({weekday}). Example: if today is Saturday 2026-03-15, then "Sunday" = 2026-03-16 (tomorrow). ALWAYS verify your computed date falls on the correct day of week.
    - Parse Russian words: "сегодня"=today, "завтра"=tomorrow, "послезавтра"=day after tomorrow.
    - RECURRING EVENTS: If the text describes a recurring schedule ("каждый день", "every morning", "каждое утро", "по вторникам", "every Friday"), return the NEXT upcoming occurrence date from {today}. For daily events use {today}.
    - If NO specific date, day of week, or recurrence pattern is mentioned, ASSUME IT IS HAPPENING TODAY ({today}).
@@ -246,8 +247,10 @@ class EventAnalyzer:
         await self.extract_limiter.acquire()
         self.stats["extracted"] += 1
 
-        today = date.today().isoformat()
-        system_prompt = EXTRACT_PROMPT.replace("{today}", today)
+        today_date = date.today()
+        today = today_date.isoformat()
+        weekday = today_date.strftime("%A")  # e.g. "Monday"
+        system_prompt = EXTRACT_PROMPT.replace("{today}", today).replace("{weekday}", weekday)
         user_prompt = f"Chat: {chat_title}\n\nMessage:\n{text[:3000]}"
 
         models_to_try = [self.model]
