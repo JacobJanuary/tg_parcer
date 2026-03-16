@@ -86,6 +86,15 @@ async def main():
     except Exception as e:
         print(f"⚠️  Spider chats load: {e}")
 
+    # Exclude chats that duplicate other sources (e.g. todo.today TG channel = scraper)
+    EXCLUDE_CHAT_IDS = {
+        2016347128,  # "Todo.Today | Koh Phangan" — duplicates todo_scraper
+    }
+    selected = [c for c in selected if c["id"] not in EXCLUDE_CHAT_IDS]
+    if EXCLUDE_CHAT_IDS:
+        excluded_titles = [str(eid) for eid in EXCLUDE_CHAT_IDS]
+        print(f"🚫 Excluded {len(EXCLUDE_CHAT_IDS)} duplicate-source chats: {excluded_titles}")
+
     chat_ids = [c["id"] for c in selected]
     print(f"📋 Итого чатов для мониторинга: {len(selected)}")
     for c in selected:
