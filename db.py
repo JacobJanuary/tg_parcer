@@ -614,6 +614,23 @@ class Database:
 
         sender_id = meta.get("sender_id")
 
+        # Cross-source dedup: same date + time + venue → skip
+        if event_date and event.get("time") and venue_id:
+            existing = await self.pool.fetchrow("""
+                SELECT id, title->>'en' as title_en, source
+                FROM events
+                WHERE event_date = $1 AND event_time = $2 AND venue_id = $3
+                LIMIT 1
+            """, event_date, event.get("time"), venue_id)
+            if existing:
+                title_en = (event.get("title") or {}).get("en", "")
+                logger.info(
+                    f"🔄 Cross-source dedup: '{title_en}' skipped — "
+                    f"already exists as ID {existing['id']} "
+                    f"'{existing['title_en']}' (src={existing['source']})"
+                )
+                return existing["id"], False, False
+
         try:
             row = await self.pool.fetchrow("""
                 INSERT INTO events
