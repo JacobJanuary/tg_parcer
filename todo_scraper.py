@@ -140,6 +140,7 @@ async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, imag
                 logger.warning(f"⛔ Event rejected by DB (island filter?): {result.get('title', {})}")
                 return
             label_cache.add(raw_text)
+            label_cache.add(source_url)  # URL dedup: prevent re-processing same event
             if is_new:
                 logger.info(f"✅ inserted NEW event: {result.get('title', {}).get('ru', 'Unknown')} (ID: {event_id})")
             else:
@@ -354,7 +355,7 @@ async def scrape_todo_today():
     new_events = []
     cached_events = []
     for e in unique_events:
-        if label_cache.contains(e["raw_text"]):
+        if label_cache.contains(e["raw_text"]) or label_cache.contains(e["source_url"]):
             cached_events.append(e)
         else:
             new_events.append(e)
