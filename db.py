@@ -631,6 +631,97 @@ class Database:
                 )
                 return existing["id"], False, False
 
+        # ── Enrichment Merge: fuzzy venue-based dedup with smart update ──
+        # Catches same event advertised with different title variations
+        if event_date and venue_id:
+            new_title_en = (event.get("title") or {}).get("en", "")
+            if new_title_en:
+                candidate = await self.pool.fetchrow("""
+                    SELECT id, title->>'en' as title_en,
+                           event_time, summary::text, description::text,
+                           filter_score, image_path, original_text
+                    FROM events
+                    WHERE venue_id = $1
+                      AND event_date = $2
+                      AND category = $3
+                      AND similarity(title->>'en', $4) > 0.5
+                    ORDER BY similarity(title->>'en', $4) DESC
+                    LIMIT 1
+                """, venue_id, event_date, event.get("category"), new_title_en)
+
+                if candidate:
+                    old_time = candidate["event_time"]
+                    new_time = event.get("time")
+                    old_summary = candidate["summary"] or ""
+                    new_summary_text = json.dumps(event.get("summary") or {}, ensure_ascii=False)
+
+                    # If BOTH have times and they differ → different sessions, not a dupe
+                    if old_time and new_time and old_time != new_time:
+                        pass  # Legit different events (morning vs evening class)
+                    else:
+                        # Check if new post brings enrichment
+                        updates = {}
+                        enrichments = []
+
+                        # 1. Time: old has none, new has time
+                        if not old_time and new_time:
+                            updates["event_time"] = new_time
+                            enrichments.append(f"time={new_time}")
+
+                        # 2. Summary/description: new is richer (>30% longer)
+                        if len(new_summary_text) > len(old_summary) * 1.3 and len(new_summary_text) > 20:
+                            updates["summary"] = json.dumps(
+                                event.get("summary") or {"en": "N/A", "ru": "N/A"},
+                                ensure_ascii=False,
+                            )
+                            updates["description"] = json.dumps(
+                                event.get("description") or {"en": "", "ru": ""},
+                                ensure_ascii=False,
+                            )
+                            enrichments.append(f"summary +{len(new_summary_text)-len(old_summary)} chars")
+
+                        # 3. Filter score improved
+                        new_score = meta.get("filter_score", 0)
+                        if new_score > (candidate["filter_score"] or 0):
+                            updates["filter_score"] = new_score
+                            enrichments.append(f"score {candidate['filter_score']}→{new_score}")
+
+                        # 4. Original text richer (lineup, details)
+                        old_orig = candidate["original_text"] or ""
+                        new_orig = meta.get("original_text") or ""
+                        if len(new_orig) > len(old_orig) * 1.3 and len(new_orig) > 50:
+                            updates["original_text"] = new_orig
+                            enrichments.append(f"original_text +{len(new_orig)-len(old_orig)} chars")
+
+                        if enrichments:
+                            # MERGE: update existing record with new data
+                            set_parts = []
+                            values = [candidate["id"]]
+                            for i, (k, v) in enumerate(updates.items()):
+                                if k in ("summary", "description"):
+                                    set_parts.append(f"{k} = ${i+2}::jsonb")
+                                else:
+                                    set_parts.append(f"{k} = ${i+2}")
+                                values.append(v)
+                            if set_parts:
+                                await self.pool.execute(
+                                    f"UPDATE events SET {', '.join(set_parts)} WHERE id = $1",
+                                    *values,
+                                )
+                            logger.info(
+                                f"✨ Enrichment merge: '{candidate['title_en']}' "
+                                f"(ID {candidate['id']}) ← {', '.join(enrichments)}"
+                            )
+                            return candidate["id"], False, bool(candidate["image_path"])
+                        else:
+                            # Similar title, same venue/date, no new info → skip
+                            logger.info(
+                                f"🔄 Fuzzy dedup skip: '{new_title_en}' ≈ "
+                                f"'{candidate['title_en']}' (ID {candidate['id']}, "
+                                f"sim>0.5, no new data)"
+                            )
+                            return candidate["id"], False, bool(candidate["image_path"])
+
         try:
             row = await self.pool.fetchrow("""
                 INSERT INTO events
