@@ -132,9 +132,9 @@ class EventAnalyzer:
             self.client._api_client._httpx_client = self._http_client
 
         # Модели
-        self.screen_model = "gemini-2.5-flash-lite"
-        self.model = "gemini-2.5-flash"
-        self.fallback_model = "gemini-2.5-flash-lite"
+        self.screen_model = "gemini-3.1-flash-lite-preview"
+        self.model = "gemini-3-flash-preview"
+        self.fallback_model = "gemini-3.1-flash-lite-preview"
 
         # Счётчики
         self.stats = {

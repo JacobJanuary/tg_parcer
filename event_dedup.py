@@ -194,7 +194,7 @@ class EventDedup:
                 f"Both are at: {venue}"
             )
             response = await client.aio.models.generate_content(
-                model="gemini-2.0-flash-lite",
+                model="gemini-3.1-flash-lite-preview",
                 contents=prompt,
             )
             answer = response.text.strip().lower()
