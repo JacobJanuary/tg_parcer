@@ -388,8 +388,9 @@ class VenueEnricher:
                         tools=[grounding_tool],
                         temperature=0.1,
                         max_output_tokens=8192,
-                        response_mime_type="application/json",
-                        response_schema=VenueData,
+                        # NOTE: response_mime_type and response_schema removed —
+                        # Gemini API does not support structured output with tools
+                        # (google_search). JSON format is enforced via prompt instead.
                     ),
                 )
 

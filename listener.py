@@ -363,9 +363,11 @@ async def main():
                                 on_new_message,
                                 events.NewMessage(chats=[entity]),
                             )
+                            monitored_chat_ids.add(entity.id)
                             print(f"  {Colors.GREEN}🕷️ Auto-joined: {title} → мониторинг активирован{Colors.RESET}")
                         except Exception as eh_err:
                             logger.debug(f"Event handler registration error for {title}: {eh_err}")
+                            monitored_chat_ids.add(entity.id)
                             print(f"  {Colors.GREEN}🕷️ Auto-joined: {title} → добавлен в БД{Colors.RESET}")
 
             except Exception as e:
@@ -532,6 +534,10 @@ async def main():
 
     # ─── Обработчик сообщений (БЫСТРЫЙ, не блокирует) ───
 
+    # Множество ID для отслеживания (используется raw handler для forum-групп)
+    monitored_chat_ids = {getattr(e, 'id', None) for e in resolved_chats}
+    monitored_chat_ids.discard(None)
+
     @client.on(events.NewMessage(chats=resolved_chats))
     async def on_new_message(event):
         nonlocal msg_count, filtered_count, spider_count
@@ -602,6 +608,80 @@ async def main():
 
         print(f"  {Colors.YELLOW}⏳ Извлечение: {chat_title}{Colors.RESET}")
         _fire_and_forget(_process_event(text, chat_title, event, filter_result.score))
+
+    # ─── Raw handler для Forum-групп с топиками ───
+    # chats= в events.NewMessage не ловит сообщения из топиков forum-групп.
+    # Этот raw handler ловит ВСЕ UpdateNewChannelMessage и пропускает
+    # сообщения из мониторимых forum-групп в основной обработчик.
+
+    from telethon import types as tl_types
+
+    @client.on(events.Raw)
+    async def on_raw_forum_update(update):
+        """Ловит сообщения из Forum-групп, которые chats= фильтр пропускает."""
+        nonlocal msg_count
+        # Нас интересуют только новые сообщения в каналах/супергруппах
+        if not isinstance(update, (tl_types.UpdateNewChannelMessage,)):
+            return
+
+        msg = update.message
+        if not isinstance(msg, tl_types.Message):
+            return
+
+        # Только сообщения из forum-топиков (reply_to с forum_topic=True)
+        if not (msg.reply_to and getattr(msg.reply_to, 'forum_topic', False)):
+            return
+
+        # Извлекаем chat_id из peer
+        peer = msg.peer_id
+        if not isinstance(peer, tl_types.PeerChannel):
+            return
+
+        chat_id = peer.channel_id
+        if chat_id not in monitored_chat_ids:
+            return
+
+        # Это forum-сообщение из мониторимой группы!
+        # Создаём fake event и передаём в основной обработчик
+        try:
+            chat = await client.get_entity(chat_id)
+            chat_title = getattr(chat, 'title', 'Forum')
+            text = msg.message or ""
+
+            # Получаем название топика
+            topic_title = None
+            try:
+                topic_id = msg.reply_to.reply_to_top_id or msg.reply_to.reply_to_msg_id
+                topic_msg = await client.get_messages(chat, ids=topic_id)
+                if topic_msg and topic_msg.action and hasattr(topic_msg.action, 'title'):
+                    topic_title = topic_msg.action.title
+            except Exception:
+                pass
+
+            if topic_title:
+                text = f"[Topic: {topic_title}]\n\n" + text
+
+            msg_count += 1
+
+            # Проверяем медиа и фильтры
+            has_media = has_photo(msg.media) if msg.media else False
+            filter_result = filters.check(text, has_media)
+
+            if not filter_result.passed:
+                return
+
+            # Проверка дупликата текста
+            if db:
+                try:
+                    if await db.is_text_exists(text):
+                        return
+                except Exception:
+                    pass
+
+            print(f"  {Colors.YELLOW}⏳ [FORUM] Извлечение: {chat_title}{' / ' + topic_title if topic_title else ''}{Colors.RESET}")
+            _fire_and_forget(_process_event(text, chat_title, None, filter_result.score))
+        except Exception as e:
+            logger.debug(f"Raw forum handler error: {e}")
 
     # ─── Background tasks ───
 

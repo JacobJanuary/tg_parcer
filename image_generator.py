@@ -9,6 +9,7 @@ import os
 import logging
 from io import BytesIO
 import httpx
+import re
 from PIL import Image
 
 from google import genai
@@ -118,6 +119,39 @@ Return ONLY the English visual prompt, nothing else. Keep it under 60 words.
         image.save(filepath, "WEBP", quality=85, method=6)
         return filename
 
+    def _validate_image(self, image_bytes: bytes, category: str, image_prompt: str) -> bool:
+        """Проверяет сгенерированное изображение на мусор/нерелевантный контент.
+        
+        Используется после gemini-flash-image-preview, который может
+        галлюцинировать текст или генерировать нерелевантные изображения.
+        """
+        try:
+            img = Image.open(BytesIO(image_bytes))
+            validation_prompt = (
+                f"You are an image quality checker for an event app. "
+                f"This image should depict: {category} event. "
+                f"Check TWO things:\n"
+                f"1. Does the image contain garbled, nonsensical, or unreadable text/letters?\n"
+                f"2. Is the image completely unrelated to '{category}' "
+                f"(e.g. VR headsets for a beach volleyball event)?\n\n"
+                f"Reply ONLY with 'PASS' if the image is acceptable, "
+                f"or 'FAIL: <reason>' if it has problems."
+            )
+            response = self.client.models.generate_content(
+                model="gemini-2.5-flash-lite",
+                contents=[validation_prompt, img],
+            )
+            result_text = (response.text or "").strip().upper()
+            if result_text.startswith("PASS"):
+                logger.info("✅ Image validation PASSED")
+                return True
+            else:
+                logger.warning(f"🚫 Image validation FAILED: {response.text.strip()[:100]}")
+                return False
+        except Exception as e:
+            logger.warning(f"⚠️ Image validation error (allowing image): {e}")
+            return True  # Fail-open: if validation itself breaks, accept the image
+
     def _sync_render_image(self, image_prompt: str, category: str, model_name: str) -> str:
         """ШАГ 2: Визуальная модель рисует шедевр"""
         logger.debug(f"⏳ 3. Рисуем картинку через {model_name}...")
@@ -135,6 +169,10 @@ Return ONLY the English visual prompt, nothing else. Keep it under 60 words.
             )
             for part in result.candidates[0].content.parts:
                 if part.inline_data:
+                    # Validate images from gemini-flash-image models
+                    if "flash-image" in model_name:
+                        if not self._validate_image(part.inline_data.data, category, image_prompt):
+                            raise ValueError(f"Image from {model_name} failed quality validation")
                     filename = self._process_and_save_image(part.inline_data.data, category)
                     logger.info(f"✅ Успех ({model_name})! Сочная обложка сохранена: {filename}")
                     return filename
@@ -144,7 +182,6 @@ Return ONLY the English visual prompt, nothing else. Keep it under 60 words.
                 prompt=image_prompt,
                 config=types.GenerateImagesConfig(
                     number_of_images=1,
-                    # output_mime_type="image/jpeg", # Imagen 3 is fine without this if we convert bytes later 
                     aspect_ratio="3:4", 
                     person_generation="ALLOW_ADULT"
                 )
