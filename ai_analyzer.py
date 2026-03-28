@@ -97,6 +97,31 @@ RULES:
 
 IMPORTANT: The message text may be in Russian, English, or mixed languages. Analyze content regardless of language."""
 
+EXTRACT_PROMPT_TODOTODAY = """You are an AI assistant for an event app on Koh Phangan, Thailand.
+Extract structured data about the OFFLINE EVENT from the text.
+
+DATA SOURCE: The input comes from todo.today - a curated event listing site for Koh Phangan.
+All events listed there are ALREADY pre-validated as real offline events on the island.
+Your job is to EXTRACT data, not to judge whether it is an event.
+
+RULES:
+1. is_event: Return true for ANY activity with a title, date, time, and location.
+   Only return false for clearly non-event content (spam, questions, discussions, sales).
+2. Category: one of "Party", "Sport", "Business", "Education", "Chill".
+3. Price (price_thb): number in Thai Baht, 0 if free, null if unknown.
+4. Location (location_name): exact venue name. Return ONLY the venue name WITHOUT area suffix.
+   Example: "Orion Healing" (NOT "Orion Healing, Srithanu").
+5. Date: "today" = {today} ({weekday}), "tomorrow" = next day.
+   Parse all date formats including YYYY-MM-DD, DD.MM, Russian words.
+6. Title: Bilingual JSON object with keys "en" and "ru". Short catchy title, max 30 chars.
+7. Summary: Bilingual JSON object with keys "en" and "ru". One sentence, max 80 chars.
+8. Description: Bilingual JSON object with keys "en" and "ru". 2-4 sentences, max 500 chars.
+9. Text Cleanliness: Plain text only. NO HTML, NO Markdown, NO emojis.
+
+IMPORTANT: If the input has Title/Date/Time/Location fields, it IS an event. Extract it."""
+
+
+
 
 
 # ─── Analyzer ───
@@ -132,9 +157,9 @@ class EventAnalyzer:
             self.client._api_client._httpx_client = self._http_client
 
         # Модели
-        self.screen_model = "gemini-3.1-flash-lite-preview"
-        self.model = "gemini-3-flash-preview"
-        self.fallback_model = "gemini-3.1-flash-lite-preview"
+        self.screen_model = "gemini-2.5-flash-lite"
+        self.model = "gemini-2.5-flash"
+        self.fallback_model = "gemini-2.5-flash-lite"
 
         # Счётчики
         self.stats = {
@@ -239,7 +264,7 @@ class EventAnalyzer:
 
         return results
 
-    async def extract(self, text: str, chat_title: str = "") -> dict | None:
+    async def extract(self, text: str, chat_title: str = "", source: str = "") -> dict | None:
         """
         Стадия 2: полное извлечение данных о мероприятии.
         Используется основная модель с fallback.
@@ -250,7 +275,8 @@ class EventAnalyzer:
         today_date = date.today()
         today = today_date.isoformat()
         weekday = today_date.strftime("%A")  # e.g. "Monday"
-        system_prompt = EXTRACT_PROMPT.replace("{today}", today).replace("{weekday}", weekday)
+        base_prompt = EXTRACT_PROMPT_TODOTODAY if source == "todotoday" else EXTRACT_PROMPT
+        system_prompt = base_prompt.replace("{today}", today).replace("{weekday}", weekday)
         user_prompt = f"Chat: {chat_title}\n\nMessage:\n{text[:3000]}"
 
         models_to_try = [self.model]

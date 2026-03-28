@@ -62,7 +62,7 @@ class EventDedup:
     """
 
     SIMILARITY_THRESHOLD = 0.60       # global fuzzy (no venue match)
-    VENUE_SIMILARITY_THRESHOLD = 0.40 # lower threshold when same venue+time
+    VENUE_SIMILARITY_THRESHOLD = 0.50 # lower threshold when same venue+time
     SUMMARY_THRESHOLD = 0.50          # summary check for venue+time match
     VENUE_MATCH_THRESHOLD = 0.50      # how similar venues must be to count as "same"
 
@@ -118,6 +118,18 @@ class EventDedup:
             title = title.get("en", "") or title.get("ru", "") or ""
         tokens = _TOKEN_RE.findall(str(title).lower())
         return {t[:5] for t in tokens if len(t) > 1}
+
+    @staticmethod
+    def _extract_instructor(title) -> str | None:
+        """Extract instructor name from 'w/ Name' or 'with Name' patterns."""
+        if isinstance(title, dict):
+            title = title.get("en", "") or title.get("ru", "") or ""
+        title = str(title)
+        m = re.search(r'(?:w/|with|by)\s+([A-ZА-ЯЁ][a-zа-яё]+(?:\s*[&,]\s*[A-ZА-ЯЁ][a-zа-яё]+)*)', title)
+        if m:
+            return m.group(1).lower().strip()
+        return None
+
 
     @staticmethod
     def _jaccard(a: set, b: set) -> float:
@@ -247,6 +259,11 @@ class EventDedup:
             if same_time and same_venue:
                 # --- Tier 2: Venue-aware fuzzy title ---
                 if title_sim >= self.VENUE_SIMILARITY_THRESHOLD:
+                    _i1 = self._extract_instructor(event.get("title", ""))
+                    _i2 = self._extract_instructor(stored.get("title", ""))
+                    if _i1 and _i2 and _i1 != _i2:
+                        logger.info(f"✅ Dedup skip (instructor diff): {_i1} != {_i2}")
+                        continue
                     logger.info(
                         f"🛑 Pre-flight fuzzy dedup caught: «{event.get('title')}» "
                         f"≈ «{stored['title']}» (sim={title_sim:.2f}, same venue+time)"
@@ -287,6 +304,11 @@ class EventDedup:
                 if not same_time:
                     continue
                 if title_sim >= self.SIMILARITY_THRESHOLD:
+                    _i1 = self._extract_instructor(event.get("title", ""))
+                    _i2 = self._extract_instructor(stored.get("title", ""))
+                    if _i1 and _i2 and _i1 != _i2:
+                        logger.info(f"✅ Dedup skip (instructor global): {_i1} != {_i2}")
+                        continue
                     logger.info(
                         f"🛑 Pre-flight fuzzy dedup caught: «{event.get('title')}» "
                         f"≈ «{stored['title']}» (sim={title_sim:.2f})"

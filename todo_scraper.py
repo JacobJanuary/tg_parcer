@@ -92,7 +92,7 @@ async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, imag
         image_url = ev.get('image_url')
         logger.info(f"Extracting: {raw_text[:50]}...")
         
-        result = await ai_analyzer.extract(raw_text, chat_title="todo.today")
+        result = await ai_analyzer.extract(raw_text, chat_title="todo.today", source="todotoday")
         if not result or not result.get("is_event"):
             logger.warning(f"AI rejected event: {raw_text[:60]}")
             # NOTE: do NOT add to label_cache here! If AI was wrong,
@@ -147,21 +147,23 @@ async def process_event(sem: asyncio.Semaphore, ai_analyzer: EventAnalyzer, imag
                 logger.info(f"🔄 updated EXISTING event: {result.get('title', {}).get('ru', 'Unknown')} (ID: {event_id})")
 
             # Trigger Image Generation only if image is missing
-            if event_id and local_image_path and (is_new or not has_image):
-                logger.info(f"🎨 Generating high-quality WebP cover using scraped reference image...")
-                filename = await image_gen.generate_cover(
-                    raw_tg_text=raw_text, 
-                    category=result.get("category", "General"), 
-                    event_id=event_id, 
-                    reference_image_path=local_image_path
+            if event_id and (is_new or not has_image):
+                logger.info(f"🎨 Generating high-quality WebP cover{' using scraped reference image' if local_image_path else ' from text prompt'}...")
+                gen_kwargs = dict(
+                    raw_tg_text=raw_text,
+                    category=result.get("category", "General"),
+                    event_id=event_id,
                 )
-                if filename:
+                if local_image_path:
+                    gen_kwargs["reference_image_path"] = local_image_path
+                filename = await image_gen.generate_cover(**gen_kwargs)
+                if filename and local_image_path:
                     try:
                         os.remove(local_image_path)
                         logger.info(f"🗑️ Deleted raw scraped GUI image {local_image_path}")
                     except Exception as e:
                         logger.warning(f"Failed to delete scraped image {local_image_path}: {e}")
-            elif local_image_path:
+            if local_image_path and not (is_new or not has_image):
                 # Cleanup raw image if we didn't need to generate a new cover
                 try:
                     os.remove(local_image_path)
